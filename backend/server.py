@@ -38,6 +38,19 @@ sio = socketio.AsyncServer(
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 
+# Root endpoint
+@app.get("/")
+async def root():
+    return {
+        "status": "CanvasFlow Backend Running Successfully 🚀",
+        "version": "1.0.0",
+        "endpoints": {
+            "auth": "/api/auth",
+            "boards": "/api/boards",
+            "ai": "/api/ai"
+        }
+    }
+
 # Active board connections: {board_id: {sid: user_data}}
 active_connections = {}
 
