@@ -31,12 +31,10 @@
         These two scripts have been added for the Visual Edits, please do not edit or remove them
         -->
         <script>
-            // Prevent any Emergent scripts from loading
-            window.emergent = { disabled: true };
+            // CanvasFlow initialization
             
             // Only load visual edit scripts when inside an iframe
             if (window.self !== window.top && false) {
-                // Debug monitor not needed for CanvasFlow
                 // Configure Tailwind
                 window.tailwind = window.tailwind || {};
                 tailwind.config = {
@@ -64,10 +62,10 @@
       To create a production bundle, use `npm run build` or `yarn build`.
     -->
         <a
-            id="emergent-badge"
+            id="canvasflow-badge"
             target="_blank"
             href="https://www.linkedin.com/in/shubham-shrivastava15/"
-            stylcanvasflow
+            style="
                 display: flex !important;
                 align-items: center !important;
                 position: fixed !important;
@@ -197,15 +195,15 @@
                 disable_session_recording: true,
             });
             
-            // Block any Emergent badge re-injection
-            const observer = new MutationObserver(() => {
-                // Remove any duplicate badges except our custom one
-                adge management for CanvasFlow
+            // Badge management for CanvasFlow
             const observer = new MutationObserver(() => {
                 // Observe badge changes if needed
                 const badges = document.querySelectorAll('[id*="canvasflow-badge"]');
                 badges.forEach(badge => {
-                    if (badge.id !== 'canvasflow
+                    if (badge.id !== 'canvasflow-badge') {
+                        badge.remove();
+                    }
+                });
             });
             
             observer.observe(document.body, { childList: true, subtree: true });
