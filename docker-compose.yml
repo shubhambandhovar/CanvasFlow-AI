@@ -1,0 +1,57 @@
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: canvasflow-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_DATABASE: canvasflow
+    networks:
+      - canvasflow-network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: canvasflow-backend
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+      - DB_NAME=canvasflow
+      - CORS_ORIGINS=*
+      - JWT_SECRET=your_super_secret_jwt_key_change_in_production
+      - JWT_ALGORITHM=HS256
+      - EMERGENT_LLM_KEY=sk-emergent-965F44dE6C46bFcA03
+    depends_on:
+      - mongodb
+    networks:
+      - canvasflow-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: canvasflow-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_BACKEND_URL=http://localhost:8001
+    depends_on:
+      - backend
+    networks:
+      - canvasflow-network
+
+volumes:
+  mongodb_data:
+    driver: local
+
+networks:
+  canvasflow-network:
+    driver: bridge
