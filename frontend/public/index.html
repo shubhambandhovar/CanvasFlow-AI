@@ -4,7 +4,7 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="theme-color" content="#000000" />
-        <meta name="description" content="A product of emergent.sh" />
+        <meta name="description" content="CanvasFlow - AI-Assisted Collaborative Whiteboard" />
         <!--
         manifest.json provides metadata used when your web app is installed on a
         user's mobile device or desktop. See https://developers.google.com/web/fundamentals/web-app-manifest/
@@ -19,17 +19,10 @@
         Learn how to configure a non-root public URL by running `npm run build`.
         -->
         <title>CanvasFlow | Collaborative Whiteboard</title>
-        <!-- <script src="https://assets.emergent.sh/scripts/emergent-main.js"></script> -->
+        <!-- CanvasFlow Application -->
         <style>
-            /* Hide any Emergent-injected badges */
-            #emergent-badge-injected,
-            [data-emergent-badge],
-            .emergent-badge-container {
-                display: none !important;
-            }
-            
-            /* Ensure our badge is visible */
-            #emergent-badge {
+            /* Badge styles for attribution */
+            #canvasflow-badge {
                 display: flex !important;
                 z-index: 9999 !important;
             }
@@ -43,11 +36,7 @@
             
             // Only load visual edit scripts when inside an iframe
             if (window.self !== window.top && false) {
-                // Load debug monitor script
-                var debugMonitorScript = document.createElement('script');
-                debugMonitorScript.src = 'https://assets.emergent.sh/scripts/debug-monitor.js';
-                document.head.appendChild(debugMonitorScript);
-
+                // Debug monitor not needed for CanvasFlow
                 // Configure Tailwind
                 window.tailwind = window.tailwind || {};
                 tailwind.config = {
@@ -78,7 +67,7 @@
             id="emergent-badge"
             target="_blank"
             href="https://www.linkedin.com/in/shubham-shrivastava15/"
-            style="
+            stylcanvasflow
                 display: flex !important;
                 align-items: center !important;
                 position: fixed !important;
@@ -211,12 +200,12 @@
             // Block any Emergent badge re-injection
             const observer = new MutationObserver(() => {
                 // Remove any duplicate badges except our custom one
-                const badges = document.querySelectorAll('[id*="emergent-badge"]');
+                adge management for CanvasFlow
+            const observer = new MutationObserver(() => {
+                // Observe badge changes if needed
+                const badges = document.querySelectorAll('[id*="canvasflow-badge"]');
                 badges.forEach(badge => {
-                    if (badge.id !== 'emergent-badge') {
-                        badge.remove();
-                    }
-                });
+                    if (badge.id !== 'canvasflow
             });
             
             observer.observe(document.body, { childList: true, subtree: true });

@@ -27,7 +27,7 @@ A full-stack real-time collaborative whiteboard application with AI-powered sugg
 - Python-SocketIO for real-time WebSocket communication
 - Motor (async MongoDB driver)
 - JWT authentication
-- Google Gemini AI via Emergent LLM integration
+- Google Gemini AI integration
 
 ### Database
 - MongoDB for storing users, boards, and version history
@@ -82,7 +82,7 @@ DB_NAME=canvasflow
 CORS_ORIGINS=*
 JWT_SECRET=your_super_secret_jwt_key
 JWT_ALGORITHM=HS256
-EMERGENT_LLM_KEY=your_emergent_llm_key
+GEMINI_API_KEY=your_gemini_api_key
 ```
 
 5. Run the backend:
@@ -123,7 +123,7 @@ yarn start
 4. Board state is maintained on the server and synced across clients
 
 ### AI Integration
-- Uses Emergent LLM Universal Key to access Google Gemini
+- Uses Google Gemini API for intelligent suggestions
 - Analyzes board objects to provide contextual suggestions
 - Suggestions include shape cleaning, annotations, and layout improvements
 
@@ -195,7 +195,7 @@ docker-compose up -d
 - `CORS_ORIGINS` - Allowed CORS origins
 - `JWT_SECRET` - Secret key for JWT tokens
 - `JWT_ALGORITHM` - JWT algorithm (default: HS256)
-- `EMERGENT_LLM_KEY` - Emergent LLM API key for AI features
+- `GEMINI_API_KEY` - Google Gemini API key for AI features
 
 ### Frontend
 - `REACT_APP_BACKEND_URL` - Backend API URL
@@ -221,9 +221,9 @@ MIT License - see LICENSE file for details
 - Verify `REACT_APP_BACKEND_URL` points to correct backend URL
 
 ### AI Suggestions Not Working
-- Verify `EMERGENT_LLM_KEY` is set correctly
+- Verify `GEMINI_API_KEY` is set correctly
 - Check backend logs for AI API errors
-- Ensure emergentintegrations package is installed
+- Ensure google-genai package is installed
 
 ### Database Connection Errors
 - Verify MongoDB is running
