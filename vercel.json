@@ -1,0 +1,7 @@
+{
+  "buildCommand": "cd frontend && yarn build",
+  "outputDirectory": "frontend/build",
+  "env": {
+    "REACT_APP_BACKEND_URL": "@react_app_backend_url"
+  }
+}
