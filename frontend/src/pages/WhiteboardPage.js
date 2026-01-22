@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Stage, Layer, Line, Rect, Circle, Arrow, Text, Transformer } from 'react-konva';
 import { useAuth } from '@/contexts/AuthContext';
@@ -89,7 +89,7 @@ export const WhiteboardPage = () => {
     }
   }, [selectedId]);
 
-  const loadBoard = async () => {
+  const loadBoard = useCallback(async () => {
     try {
       const response = await axios.get(`${API}/boards/${boardId}`);
       setBoard(response.data);
@@ -101,9 +101,9 @@ export const WhiteboardPage = () => {
       toast.error('Failed to load board');
       navigate('/dashboard');
     }
-  };
+  }, [boardId]);
 
-  const setupSocket = () => {
+  const setupSocket = useCallback(() => {
     const newSocket = io(BACKEND_URL, {
       transports: ['websocket', 'polling']
     });
@@ -151,7 +151,7 @@ export const WhiteboardPage = () => {
     });
 
     setSocket(newSocket);
-  };
+  }, [boardId, user.id, user.name]);
 
   const saveToHistory = (newObjects) => {
     const newHistory = history.slice(0, historyStep + 1);
