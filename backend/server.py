@@ -118,6 +118,115 @@ async def login(credentials: UserLogin):
     
     return TokenResponse(access_token=access_token, user=user_response)
 
+@api_router.post("/auth/google", response_model=TokenResponse)
+async def google_login(request: dict):
+    """
+    Google OAuth login endpoint using auth code flow.
+    Expected request body: {"code": "<authorization_code>"}
+    """
+    import requests as http_requests
+    from google.auth.transport import requests as google_requests
+    from google.oauth2 import id_token
+    
+    code = request.get('code')
+    if not code:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing authorization code"
+        )
+    
+    try:
+        # Exchange code for token with Google
+        token_url = "https://oauth2.googleapis.com/token"
+        token_data = {
+            "code": code,
+            "client_id": os.environ.get('GOOGLE_CLIENT_ID'),
+            "client_secret": os.environ.get('GOOGLE_CLIENT_SECRET'),
+            "redirect_uri": os.environ.get('GOOGLE_CALLBACK_URL', 'http://localhost:3000/auth/google/callback'),
+            "grant_type": "authorization_code"
+        }
+        
+        # Log for debugging
+        print(f"[OAuth] Exchanging code with redirect_uri: {token_data['redirect_uri']}")
+        
+        token_response = http_requests.post(token_url, data=token_data)
+        if token_response.status_code != 200:
+            error_detail = token_response.json().get('error_description', 'Unknown error')
+            print(f"[OAuth Error] {error_detail}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to exchange code: {error_detail}"
+            )
+        
+        tokens = token_response.json()
+        id_token_str = tokens.get('id_token')
+        
+        if not id_token_str:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No ID token received"
+            )
+        
+        # Verify and decode the ID token
+        idinfo = id_token.verify_oauth2_token(
+            id_token_str,
+            google_requests.Request(),
+            os.environ.get('GOOGLE_CLIENT_ID')
+        )
+        
+        # Extract user info
+        email = idinfo.get('email')
+        name = idinfo.get('name', email.split('@')[0])
+        picture = idinfo.get('picture')
+        google_id = idinfo.get('sub')
+        
+        if not email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Google token"
+            )
+        
+        # Check if user exists
+        user_dict = await db.users.find_one({"email": email}, {"_id": 0})
+        
+        if not user_dict:
+            # Create new user
+            user = User(
+                email=email,
+                name=name,
+                hashed_password=get_password_hash(google_id)
+            )
+            user_dict = user.model_dump()
+            user_dict['created_at'] = user_dict['created_at'].isoformat()
+            await db.users.insert_one(user_dict)
+        
+        # Create JWT token
+        access_token = create_access_token(
+            data={"sub": user_dict['id'], "email": user_dict['email']}
+        )
+        
+        user_response = UserResponse(
+            id=user_dict['id'],
+            email=user_dict['email'],
+            name=user_dict['name'],
+            created_at=datetime.fromisoformat(user_dict['created_at'])
+        )
+        
+        return TokenResponse(access_token=access_token, user=user_response)
+        
+    except ValueError as e:
+        logging.error(f"Google token verification failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid Google token"
+        )
+    except Exception as e:
+        logging.error(f"Google login error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Google login failed"
+        )
+
 @api_router.get("/auth/me", response_model=UserResponse)
 async def get_me(current_user: dict = Depends(get_current_user)):
     user_dict = await db.users.find_one({"id": current_user['user_id']}, {"_id": 0})
@@ -307,12 +416,30 @@ CRITICAL:
         
         suggestions = []
         for sugg in suggestions_data:
-            suggestions.append(AISuggestion(
-                type=sugg['type'],
-                title=sugg['title'],
-                description=sugg['description'],
-                action={}  # In a real app, this would contain specific actions
-            ))
+            # Check if this is a shape creation command
+            if sugg.get('action') == 'create_shape':
+                # Preserve the action data for shape creation
+                suggestions.append(AISuggestion(
+                    type='shape_create',
+                    title=sugg.get('title', 'Create Shape'),
+                    description=sugg.get('description', ''),
+                    action={
+                        'action': 'create_shape',
+                        'shape_type': sugg.get('shape_type', 'rectangle'),
+                        'quantity': sugg.get('quantity', 1),
+                        'position': sugg.get('position', 'center'),
+                        'reference': sugg.get('reference', 'last'),
+                        'text_content': sugg.get('text_content')
+                    }
+                ))
+            else:
+                # Regular suggestion
+                suggestions.append(AISuggestion(
+                    type=sugg.get('type', 'suggestion'),
+                    title=sugg.get('title', ''),
+                    description=sugg.get('description', ''),
+                    action=sugg.get('action', {})
+                ))
         
         return suggestions
     except Exception as e:
@@ -410,6 +537,10 @@ async def board_update(sid, data):
     objects = data['objects']
     version = data['version']
     
+    # Ensure objects is a list and properly serializable
+    if not isinstance(objects, list):
+        objects = []
+    
     # Update board in database
     await db.boards.update_one(
         {"id": board_id},
@@ -419,14 +550,16 @@ async def board_update(sid, data):
                 "version": version,
                 "updated_at": datetime.now(timezone.utc).isoformat()
             }
-        }
+        },
+        upsert=False
     )
     
-    # Broadcast to other users
+    # Broadcast to ALL users in the room (including sender for confirmation)
     await sio.emit('board_updated', {
         'objects': objects,
-        'version': version
-    }, room=board_id, skip_sid=sid)
+        'version': version,
+        'updated_at': datetime.now(timezone.utc).isoformat()
+    }, room=board_id)
 
 # Add CORS middleware BEFORE including router
 cors_origins = os.environ.get("CORS_ORIGINS", "http://localhost:3000,http://localhost:3001").split(",")

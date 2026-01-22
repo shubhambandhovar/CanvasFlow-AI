@@ -30,9 +30,13 @@ const TOOLS = {
 const CURSOR_COLORS = ['#FF0055', '#00E5FF', '#00FF99', '#FFD500', '#9D00FF'];
 
 export const WhiteboardPage = () => {
-  const { boardId } = useParams();
+  const { boardId, shareToken } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
+  
+  // Use shareToken if available, otherwise use boardId
+  const currentBoardId = boardId || shareToken;
+  const isSharedBoard = !!shareToken;
   
   const [board, setBoard] = useState(null);
   const [objects, setObjects] = useState([]);
@@ -72,13 +76,20 @@ export const WhiteboardPage = () => {
   useEffect(() => {
     const loadBoard = async () => {
       try {
-        const response = await axios.get(`${API}/boards/${boardId}`);
+        // Use different endpoint for shared boards
+        const endpoint = isSharedBoard 
+          ? `${API}/boards/share/${shareToken}`
+          : `${API}/boards/${boardId}`;
+        
+        const response = await axios.get(endpoint);
+        console.log('Board loaded:', response.data);
         setBoard(response.data);
         setObjects(response.data.objects || []);
         setBoardVersion(response.data.version || 0);
         setHistory([response.data.objects || []]);
         setHistoryStep(0);
       } catch (error) {
+        console.error('Failed to load board:', error);
         toast.error('Failed to load board');
         navigate('/dashboard');
       }
@@ -86,15 +97,33 @@ export const WhiteboardPage = () => {
 
     const setupSocket = () => {
       const newSocket = io(BACKEND_URL, {
-        transports: ['websocket', 'polling']
+        transports: ['websocket', 'polling'],
+        reconnection: true,
+        reconnectionDelay: 1000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: 5
       });
 
       newSocket.on('connect', () => {
+        console.log('Socket connected:', newSocket.id);
+        toast.success('Connected to board');
+        // Use board.id when available, otherwise currentBoardId
+        const boardIdToUse = board?.id || currentBoardId;
         newSocket.emit('join_board', {
-          board_id: boardId,
+          board_id: boardIdToUse,
           user_id: user.id,
           name: user.name
         });
+      });
+
+      newSocket.on('connect_error', (error) => {
+        console.error('Socket connection error:', error);
+        toast.error('Connection error: ' + error.message);
+      });
+
+      newSocket.on('disconnect', () => {
+        console.log('Socket disconnected');
+        toast.error('Disconnected from board');
       });
 
       newSocket.on('users_list', (data) => {
@@ -124,8 +153,9 @@ export const WhiteboardPage = () => {
       });
 
       newSocket.on('board_updated', (data) => {
-        setObjects(data.objects);
-        if (typeof data.version === 'number') {
+        // Only update if version is newer
+        if (data.version > boardVersion) {
+          setObjects(data.objects || []);
           setBoardVersion(data.version);
         }
       });
@@ -164,7 +194,7 @@ export const WhiteboardPage = () => {
       const nextVersion = boardVersion + 1;
       setBoardVersion(nextVersion);
       socket.emit('board_update', {
-        board_id: boardId,
+        board_id: board?.id || currentBoardId,
         objects: newObjects,
         version: nextVersion
       });
@@ -416,7 +446,7 @@ export const WhiteboardPage = () => {
     // Send cursor position to other users
     if (socket) {
       socket.emit('cursor_move', {
-        board_id: boardId,
+        board_id: board?.id || currentBoardId,
         cursor: { x: pointerPos.x, y: pointerPos.y }
       });
     }
@@ -503,7 +533,7 @@ export const WhiteboardPage = () => {
     setLoadingAI(true);
     try {
       const response = await axios.post(`${API}/ai/suggestions`, {
-        board_id: boardId,
+        board_id: board?.id || currentBoardId,
         objects
       });
       setAiSuggestions(response.data);
@@ -761,20 +791,26 @@ export const WhiteboardPage = () => {
     // Fall back to AI for complex commands
     try {
       const response = await axios.post(`${API}/ai/suggestions`, {
-        board_id: boardId,
+        board_id: board?.id || currentBoardId,
         objects,
         context: trimmedPrompt
       });
       
       const results = response.data;
       
-      if (results && results.length > 0 && results[0].action === 'create_shape') {
+      // Check if any results contain shape creation actions
+      const hasCreateActions = results && results.length > 0 && 
+        results.some(r => r.action && typeof r.action === 'object' && r.action.action === 'create_shape');
+      
+      if (hasCreateActions) {
         // Execute shape creation commands
         let shapesCreated = 0;
         
-        for (const command of results) {
-          const created = executeShapeCommand(command);
-          if (created) shapesCreated++;
+        for (const result of results) {
+          if (result.action && result.action.action === 'create_shape') {
+            const created = executeShapeCommand(result.action);
+            if (created) shapesCreated++;
+          }
         }
         
         if (shapesCreated > 0) {
@@ -1004,13 +1040,17 @@ export const WhiteboardPage = () => {
   };
 
   const handleShare = () => {
-    setShowShareDialog(true);
+    // Dialog opens directly from button, this is not needed
   };
 
   const copyShareLink = () => {
+    if (!board || !board.share_token) {
+      toast.error('Board not ready. Please refresh the page.');
+      return;
+    }
     const shareLink = `${window.location.origin}/board/share/${board.share_token}`;
     navigator.clipboard.writeText(shareLink);
-    toast.success('Share link copied to clipboard!');
+    toast.success('✓ Share link copied!');
   };
 
   const renderObject = (obj) => {
@@ -1152,8 +1192,8 @@ export const WhiteboardPage = () => {
           {/* Share */}
           <Button
             size="sm"
-            onClick={handleShare}
-            className="rounded-full"
+            onClick={() => setShowShareDialog(true)}
+            className="rounded-full bg-orange-500 hover:bg-orange-600"
             data-testid="share-button"
           >
             <Share2 className="w-4 h-4 mr-2" />
@@ -1414,29 +1454,38 @@ export const WhiteboardPage = () => {
       )}
 
       {/* Share Dialog */}
-      <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Share Board</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Anyone with this link can view and collaborate on this board.
-            </p>
-            <div className="flex gap-2">
-              <Input
-                readOnly
-                value={`${window.location.origin}/board/share/${board.share_token}`}
-                className="flex-1"
-                data-testid="share-link-input"
-              />
-              <Button onClick={copyShareLink} data-testid="copy-share-link">
-                Copy Link
-              </Button>
+      {showShareDialog && board && (
+        <Dialog open={showShareDialog} onOpenChange={setShowShareDialog}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Share This Board</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                Copy this link to share your board with others:
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  readOnly
+                  value={`${window.location.origin}/board/share/${board.share_token}`}
+                  className="flex-1 text-sm"
+                  onClick={(e) => e.target.select()}
+                />
+                <Button
+                  onClick={copyShareLink}
+                  variant="default"
+                  size="sm"
+                >
+                  Copy
+                </Button>
+              </div>
+              <p className="text-xs text-gray-500">
+                Anyone with this link can view and edit this board in real-time.
+              </p>
             </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 };
