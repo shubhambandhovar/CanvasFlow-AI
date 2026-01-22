@@ -2,6 +2,7 @@
   "buildCommand": "yarn install && yarn build",
   "outputDirectory": "build",
   "env": {
-    "REACT_APP_BACKEND_URL": "https://canvasflow-backend.onrender.com"
+    "REACT_APP_BACKEND_URL": "https://canvasflow-backend.onrender.com",
+    "CI": "false"
   }
 }
