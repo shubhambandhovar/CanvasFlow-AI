@@ -88,8 +88,8 @@ export const LandingPage = () => {
           <div className="relative">
             <div className="glass rounded-3xl p-8 aspect-video flex items-center justify-center">
               <img
-                src="https://images.pexels.com/photos/7495605/pexels-photo-7495605.jpeg"
-                alt="Collaboration"
+                src="/bg.png"
+                alt="AI-Assisted Collaborative Whiteboard"
                 className="rounded-2xl object-cover w-full h-full"
               />
             </div>
