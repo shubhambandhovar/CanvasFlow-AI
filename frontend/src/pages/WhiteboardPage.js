@@ -139,7 +139,7 @@ export const WhiteboardPage = () => {
     return () => {
       if (socket) socket.disconnect();
     };
-  }, [boardId, user.id, user.name]);
+  }, []);
 
   useEffect(() => {
     if (selectedId && transformerRef.current) {
