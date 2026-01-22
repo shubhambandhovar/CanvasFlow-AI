@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Stage, Layer, Line, Rect, Circle, Arrow, Text, Transformer } from 'react-konva';
 import { useAuth } from '@/contexts/AuthContext';
@@ -70,13 +70,76 @@ export const WhiteboardPage = () => {
   const layerRef = useRef(null);
 
   useEffect(() => {
+    const loadBoard = async () => {
+      try {
+        const response = await axios.get(`${API}/boards/${boardId}`);
+        setBoard(response.data);
+        setObjects(response.data.objects || []);
+        setBoardVersion(response.data.version || 0);
+        setHistory([response.data.objects || []]);
+        setHistoryStep(0);
+      } catch (error) {
+        toast.error('Failed to load board');
+        navigate('/dashboard');
+      }
+    };
+
+    const setupSocket = () => {
+      const newSocket = io(BACKEND_URL, {
+        transports: ['websocket', 'polling']
+      });
+
+      newSocket.on('connect', () => {
+        newSocket.emit('join_board', {
+          board_id: boardId,
+          user_id: user.id,
+          name: user.name
+        });
+      });
+
+      newSocket.on('users_list', (data) => {
+        setConnectedUsers(data.users);
+      });
+
+      newSocket.on('user_joined', (data) => {
+        toast.success(`${data.name} joined the board`);
+        setConnectedUsers(prev => [...prev, { user_id: data.user_id, name: data.name, cursor: { x: 0, y: 0 } }]);
+      });
+
+      newSocket.on('user_left', (data) => {
+        toast.info(`${data.name} left the board`);
+        setConnectedUsers(prev => prev.filter(u => u.user_id !== data.user_id));
+        setCursors(prev => {
+          const newCursors = { ...prev };
+          delete newCursors[data.user_id];
+          return newCursors;
+        });
+      });
+
+      newSocket.on('cursor_moved', (data) => {
+        setCursors(prev => ({
+          ...prev,
+          [data.user_id]: data.cursor
+        }));
+      });
+
+      newSocket.on('board_updated', (data) => {
+        setObjects(data.objects);
+        if (typeof data.version === 'number') {
+          setBoardVersion(data.version);
+        }
+      });
+
+      setSocket(newSocket);
+    };
+
     loadBoard();
     setupSocket();
     
     return () => {
       if (socket) socket.disconnect();
     };
-  }, [boardId, loadBoard, setupSocket]);
+  }, [boardId, user.id, user.name]);
 
   useEffect(() => {
     if (selectedId && transformerRef.current) {
@@ -88,70 +151,6 @@ export const WhiteboardPage = () => {
       }
     }
   }, [selectedId]);
-
-  const loadBoard = useCallback(async () => {
-    try {
-      const response = await axios.get(`${API}/boards/${boardId}`);
-      setBoard(response.data);
-      setObjects(response.data.objects || []);
-      setBoardVersion(response.data.version || 0);
-      setHistory([response.data.objects || []]);
-      setHistoryStep(0);
-    } catch (error) {
-      toast.error('Failed to load board');
-      navigate('/dashboard');
-    }
-  }, [boardId]);
-
-  const setupSocket = useCallback(() => {
-    const newSocket = io(BACKEND_URL, {
-      transports: ['websocket', 'polling']
-    });
-
-    newSocket.on('connect', () => {
-      newSocket.emit('join_board', {
-        board_id: boardId,
-        user_id: user.id,
-        name: user.name
-      });
-    });
-
-    newSocket.on('users_list', (data) => {
-      setConnectedUsers(data.users);
-    });
-
-    newSocket.on('user_joined', (data) => {
-      toast.success(`${data.name} joined the board`);
-      setConnectedUsers(prev => [...prev, { user_id: data.user_id, name: data.name, cursor: { x: 0, y: 0 } }]);
-    });
-
-    newSocket.on('user_left', (data) => {
-      toast.info(`${data.name} left the board`);
-      setConnectedUsers(prev => prev.filter(u => u.user_id !== data.user_id));
-      setCursors(prev => {
-        const newCursors = { ...prev };
-        delete newCursors[data.user_id];
-        return newCursors;
-      });
-    });
-
-    newSocket.on('cursor_moved', (data) => {
-      setCursors(prev => ({
-        ...prev,
-        [data.user_id]: data.cursor
-      }));
-    });
-
-    newSocket.on('board_updated', (data) => {
-      // Apply remote updates without modifying local undo/redo history
-      setObjects(data.objects);
-      if (typeof data.version === 'number') {
-        setBoardVersion(data.version);
-      }
-    });
-
-    setSocket(newSocket);
-  }, [boardId, user.id, user.name]);
 
   const saveToHistory = (newObjects) => {
     const newHistory = history.slice(0, historyStep + 1);
