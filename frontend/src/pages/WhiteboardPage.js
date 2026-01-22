@@ -76,7 +76,7 @@ export const WhiteboardPage = () => {
     return () => {
       if (socket) socket.disconnect();
     };
-  }, [boardId]);
+  }, [boardId, loadBoard, setupSocket, socket]);
 
   useEffect(() => {
     if (selectedId && transformerRef.current) {
