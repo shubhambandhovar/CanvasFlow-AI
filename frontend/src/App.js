@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { Toaster } from '@/components/ui/sonner';
+import { ThemeProvider } from 'next-themes';
 import { LandingPage } from '@/pages/LandingPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { RegisterPage } from '@/pages/RegisterPage';
@@ -13,8 +14,8 @@ import { GoogleCallbackPage } from '@/pages/GoogleCallbackPage';
 import '@/App.css';
 
 const PrivateRoute = ({ children }) => {
-  const { user, loading } = useAuth();
-  
+  const { user, loading, token } = useAuth();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -22,13 +23,14 @@ const PrivateRoute = ({ children }) => {
       </div>
     );
   }
-  
-  return user ? children : <Navigate to="/login" />;
+
+  const storedToken = localStorage.getItem('token');
+  return user || token || storedToken ? children : <Navigate to="/login" />;
 };
 
 const PublicRoute = ({ children }) => {
-  const { user, loading } = useAuth();
-  
+  const { user, loading, token } = useAuth();
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-screen">
@@ -36,8 +38,9 @@ const PublicRoute = ({ children }) => {
       </div>
     );
   }
-  
-  return !user ? children : <Navigate to="/dashboard" />;
+
+  const storedToken = localStorage.getItem('token');
+  return user || token || storedToken ? <Navigate to="/dashboard" /> : children;
 };
 
 function AppRoutes() {
@@ -56,14 +59,16 @@ function AppRoutes() {
 
 function App() {
   return (
-    <GoogleOAuthProvider clientId="812425967195-iafrnsst6p9s2p9ppd9vembkmftknptp.apps.googleusercontent.com">
-      <AuthProvider>
-        <BrowserRouter>
-          <AppRoutes />
-          <Toaster position="top-right" richColors />
-        </BrowserRouter>
-      </AuthProvider>
-    </GoogleOAuthProvider>
+    <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+      <GoogleOAuthProvider clientId="812425967195-iafrnsst6p9s2p9ppd9vembkmftknptp.apps.googleusercontent.com">
+        <AuthProvider>
+          <BrowserRouter>
+            <AppRoutes />
+            <Toaster position="top-right" richColors />
+          </BrowserRouter>
+        </AuthProvider>
+      </GoogleOAuthProvider>
+    </ThemeProvider>
   );
 }
 

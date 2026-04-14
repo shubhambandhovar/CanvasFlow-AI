@@ -1,20 +1,27 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import axios from 'axios';
 import { toast } from '@/components/ui/sonner';
+import { useAuth } from '@/contexts/AuthContext';
 
-const API = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8000/api';
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL || 'http://localhost:8001';
+const API = `${BACKEND_URL}/api`;
 
 export function GoogleCallbackPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const { setAuthData } = useAuth();
+  const hasProcessed = useRef(false);
 
   useEffect(() => {
+    if (hasProcessed.current) return;
+    
     const handleGoogleCallback = async () => {
+      hasProcessed.current = true;
       try {
         const code = searchParams.get('code');
         const state = searchParams.get('state');
-        
+
         if (!code) {
           const error = searchParams.get('error');
           const errorDescription = searchParams.get('error_description');
@@ -27,8 +34,9 @@ export function GoogleCallbackPage() {
         });
 
         const { access_token, user } = response.data;
-        localStorage.setItem('token', access_token);
-        axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
+
+        // Update context and storage
+        setAuthData(access_token, user);
 
         toast.success(`Welcome ${user.name}!`);
         navigate('/dashboard');
@@ -40,7 +48,7 @@ export function GoogleCallbackPage() {
     };
 
     handleGoogleCallback();
-  }, [searchParams, navigate]);
+  }, [searchParams, navigate, setAuthData]);
 
   return (
     <div className="flex items-center justify-center h-screen">

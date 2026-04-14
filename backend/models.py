@@ -13,6 +13,13 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
+class UserUpdate(BaseModel):
+    name: Optional[str] = None
+    theme: Optional[str] = None
+    starred_boards: Optional[List[str]] = None
+    avatar_url: Optional[str] = None
+    password: Optional[str] = None
+
 class User(BaseModel):
     model_config = ConfigDict(extra="ignore")
     
@@ -20,12 +27,20 @@ class User(BaseModel):
     email: EmailStr
     name: str
     hashed_password: str
+    theme: str = "system"
+    avatar_url: Optional[str] = None
+    tier: str = "Free"
+    starred_boards: List[str] = []
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 class UserResponse(BaseModel):
     id: str
     email: str
     name: str
+    theme: str = "system"
+    avatar_url: Optional[str] = None
+    tier: str = "Free"
+    starred_boards: List[str] = []
     created_at: datetime
 
 class TokenResponse(BaseModel):
@@ -42,6 +57,7 @@ class BoardObject(BaseModel):
 class BoardCreate(BaseModel):
     title: str
     description: Optional[str] = None
+    template: Optional[str] = "blank"
 
 class BoardUpdate(BaseModel):
     title: Optional[str] = None

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, Depends, HTTPException, status
+from fastapi import FastAPI, APIRouter, Depends, HTTPException, status, Body
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -10,13 +10,17 @@ import socketio
 from datetime import datetime, timezone
 
 from models import (
-    UserCreate, UserLogin, TokenResponse, User, UserResponse,
-    BoardCreate, BoardUpdate, Board, BoardResponse,
+    UserCreate, UserLogin, UserUpdate, TokenResponse, User, UserResponse,
+    BoardCreate, BoardUpdate, Board, BoardResponse, BoardObject,
     AISuggestionRequest, AISuggestion
 )
 from auth import (
     get_password_hash, verify_password, create_access_token, get_current_user
 )
+import requests as http_requests
+import httpx
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -70,7 +74,11 @@ async def register(user_data: UserCreate):
     user = User(
         email=user_data.email,
         name=user_data.name,
-        hashed_password=get_password_hash(user_data.password)
+        hashed_password=get_password_hash(user_data.password),
+        theme="system",
+        avatar_url=None,
+        tier="Free",
+        starred_boards=[]
     )
     
     user_dict = user.model_dump()
@@ -85,6 +93,10 @@ async def register(user_data: UserCreate):
         id=user.id,
         email=user.email,
         name=user.name,
+        theme=user.theme,
+        avatar_url=user.avatar_url,
+        tier=user.tier,
+        starred_boards=user.starred_boards,
         created_at=user.created_at
     )
     
@@ -113,22 +125,23 @@ async def login(credentials: UserLogin):
         id=user_dict['id'],
         email=user_dict['email'],
         name=user_dict['name'],
+        theme=user_dict.get('theme', 'system'),
+        avatar_url=user_dict.get('avatar_url'),
+        tier=user_dict.get('tier', 'Free'),
+        starred_boards=user_dict.get('starred_boards', []),
         created_at=datetime.fromisoformat(user_dict['created_at'])
     )
     
     return TokenResponse(access_token=access_token, user=user_response)
 
 @api_router.post("/auth/google", response_model=TokenResponse)
-async def google_login(request: dict):
+async def google_login(payload: dict = Body(...)):
     """
     Google OAuth login endpoint using auth code flow.
     Expected request body: {"code": "<authorization_code>"}
     """
-    import requests as http_requests
-    from google.auth.transport import requests as google_requests
-    from google.oauth2 import id_token
     
-    code = request.get('code')
+    code = payload.get('code')
     if not code:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -147,18 +160,35 @@ async def google_login(request: dict):
         }
         
         # Log for debugging
-        print(f"[OAuth] Exchanging code with redirect_uri: {token_data['redirect_uri']}")
+        logging.info(f"[OAuth] Exchanging code with redirect_uri: {token_data['redirect_uri']}")
         
-        token_response = http_requests.post(token_url, data=token_data)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            token_response = await client.post(token_url, data=token_data)
+        
         if token_response.status_code != 200:
-            error_detail = token_response.json().get('error_description', 'Unknown error')
-            print(f"[OAuth Error] {error_detail}")
+            try:
+                error_json = token_response.json()
+                error_detail = error_json.get('error_description') or error_json.get('error') or 'Unknown error'
+                logging.error(f"[OAuth Error Response] {error_json}")
+            except Exception:
+                error_detail = token_response.text or "Unknown error"
+                logging.error(f"[OAuth Error response text] {token_response.text}")
+            
+            logging.error(f"[OAuth Error] {error_detail}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Failed to exchange code: {error_detail}"
             )
         
-        tokens = token_response.json()
+        try:
+            tokens = token_response.json()
+        except ValueError:
+             logging.error(f"[OAuth Error] Invalid JSON from Google: {token_response.text}")
+             raise HTTPException(
+                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                 detail="Invalid response from Google"
+             )
+
         id_token_str = tokens.get('id_token')
         
         if not id_token_str:
@@ -194,7 +224,11 @@ async def google_login(request: dict):
             user = User(
                 email=email,
                 name=name,
-                hashed_password=get_password_hash(google_id)
+                hashed_password=get_password_hash(google_id),
+                theme="system",
+                avatar_url=None,
+                tier="Free",
+                starred_boards=[]
             )
             user_dict = user.model_dump()
             user_dict['created_at'] = user_dict['created_at'].isoformat()
@@ -209,6 +243,10 @@ async def google_login(request: dict):
             id=user_dict['id'],
             email=user_dict['email'],
             name=user_dict['name'],
+            theme=user_dict.get('theme', 'system'),
+            avatar_url=user_dict.get('avatar_url'),
+            tier=user_dict.get('tier', 'Free'),
+            starred_boards=user_dict.get('starred_boards', []),
             created_at=datetime.fromisoformat(user_dict['created_at'])
         )
         
@@ -222,9 +260,13 @@ async def google_login(request: dict):
         )
     except Exception as e:
         logging.error(f"Google login error: {e}")
+        with open("backend_error.log", "a") as f:
+            f.write(f"[{datetime.now()}] Google login error: {str(e)}\n")
+            import traceback
+            f.write(traceback.format_exc() + "\n")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Google login failed"
+            detail=f"Google login failed: {str(e)}"
         )
 
 @api_router.get("/auth/me", response_model=UserResponse)
@@ -237,26 +279,100 @@ async def get_me(current_user: dict = Depends(get_current_user)):
         id=user_dict['id'],
         email=user_dict['email'],
         name=user_dict['name'],
+        theme=user_dict.get('theme', 'system'),
+        avatar_url=user_dict.get('avatar_url'),
+        tier=user_dict.get('tier', 'Free'),
+        starred_boards=user_dict.get('starred_boards', []),
         created_at=datetime.fromisoformat(user_dict['created_at'])
     )
+
+@api_router.put("/auth/profile", response_model=UserResponse)
+async def update_profile(profile_data: UserUpdate, current_user: dict = Depends(get_current_user)):
+    user_dict = await db.users.find_one({"id": current_user['user_id']}, {"_id": 0})
+    if not user_dict:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    update_data = {k: v for k, v in profile_data.model_dump().items() if v is not None}
+    
+    if 'password' in update_data:
+        update_data['hashed_password'] = get_password_hash(update_data.pop('password'))
+        
+    if update_data:
+        await db.users.update_one({"id": current_user['user_id']}, {"$set": update_data})
+        
+    updated_user = await db.users.find_one({"id": current_user['user_id']}, {"_id": 0})
+    
+    return UserResponse(
+        id=updated_user['id'],
+        email=updated_user['email'],
+        name=updated_user['name'],
+        theme=updated_user.get('theme', 'system'),
+        avatar_url=updated_user.get('avatar_url'),
+        tier=updated_user.get('tier', 'Free'),
+        starred_boards=updated_user.get('starred_boards', []),
+        created_at=datetime.fromisoformat(updated_user['created_at'])
+    )
+
+@api_router.delete("/auth/profile")
+async def delete_profile(current_user: dict = Depends(get_current_user)):
+    user_dict = await db.users.find_one({"id": current_user['user_id']}, {"_id": 0})
+    if not user_dict:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    # Delete the user
+    await db.users.delete_one({"id": current_user['user_id']})
+    
+    # Optionally, delete the boards owned by the user
+    await db.boards.delete_many({"owner_id": current_user['user_id']})
+    
+    return {"message": "Account successfully deleted"}
+
 
 # ============= Board Endpoints =============
 
 @api_router.post("/boards", response_model=BoardResponse)
 async def create_board(board_data: BoardCreate, current_user: dict = Depends(get_current_user)):
-    board = Board(
-        title=board_data.title,
-        description=board_data.description,
-        owner_id=current_user['user_id']
-    )
-    
-    board_dict = board.model_dump()
-    board_dict['created_at'] = board_dict['created_at'].isoformat()
-    board_dict['updated_at'] = board_dict['updated_at'].isoformat()
-    
-    await db.boards.insert_one(board_dict)
-    
-    return BoardResponse(**board.model_dump())
+    try:
+        board = Board(
+            title=board_data.title,
+            description=board_data.description,
+            owner_id=current_user['user_id']
+        )
+        
+        import uuid
+        template = getattr(board_data, 'template', 'blank') or 'blank'
+        if template == 'flowchart':
+            board.objects = [
+                BoardObject(id=str(uuid.uuid4()), type="rectangle", data={"x": 300, "y": 100, "width": 160, "height": 80, "text": "Start Task", "fill": "#E5E7EB", "stroke": "#374151"}),
+                BoardObject(id=str(uuid.uuid4()), type="rectangle", data={"x": 300, "y": 300, "width": 160, "height": 80, "text": "Process", "fill": "#FFFFFF", "stroke": "#374151"}),
+                BoardObject(id=str(uuid.uuid4()), type="arrow", data={"points": [380, 180, 380, 300], "stroke": "#374151", "strokeWidth": 2})
+            ]
+        elif template == 'mindmap':
+            board.objects = [
+                BoardObject(id=str(uuid.uuid4()), type="circle", data={"x": 400, "y": 300, "radius": 70, "text": "Central Idea", "fill": "#DBEAFE", "stroke": "#1E3A8A"}),
+                BoardObject(id=str(uuid.uuid4()), type="circle", data={"x": 200, "y": 150, "radius": 50, "text": "Branch 1", "fill": "#FFFFFF", "stroke": "#1E3A8A"}),
+                BoardObject(id=str(uuid.uuid4()), type="circle", data={"x": 600, "y": 150, "radius": 50, "text": "Branch 2", "fill": "#FFFFFF", "stroke": "#1E3A8A"}),
+                BoardObject(id=str(uuid.uuid4()), type="line", data={"points": [345, 255, 235, 185], "stroke": "#1E3A8A", "strokeWidth": 2}),
+                BoardObject(id=str(uuid.uuid4()), type="line", data={"points": [455, 255, 565, 185], "stroke": "#1E3A8A", "strokeWidth": 2})
+            ]
+            
+        board_dict = board.model_dump()
+        board_dict['created_at'] = board_dict['created_at'].isoformat() if isinstance(board_dict['created_at'], datetime) else board_dict['created_at']
+        board_dict['updated_at'] = board_dict['updated_at'].isoformat() if isinstance(board_dict['updated_at'], datetime) else board_dict['updated_at']
+        
+        await db.boards.insert_one(board_dict)
+        
+        return board
+    except Exception as e:
+        logging.error(f"Board creation error: {e}")
+        with open("backend_error.log", "a") as f:
+            f.write(f"[{datetime.now()}] Board creation error: {str(e)}\n")
+            import traceback
+            f.write(traceback.format_exc() + "\n")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create board: {str(e)}"
+        )
 
 @api_router.get("/boards", response_model=List[BoardResponse])
 async def get_boards(current_user: dict = Depends(get_current_user)):
@@ -346,119 +462,149 @@ async def delete_board(board_id: str, current_user: dict = Depends(get_current_u
 
 @api_router.post("/ai/suggestions", response_model=List[AISuggestion])
 async def get_ai_suggestions(request: AISuggestionRequest, current_user: dict = Depends(get_current_user)):
-    import google.genai as genai
+    import google.generativeai as genai
     import json
 
-    # Configure Gemini API (new client)
-    client = genai.Client(api_key=os.environ.get('GEMINI_API_KEY'))
+    # Configure Gemini API
+    api_key = os.environ.get('GEMINI_API_KEY')
+    if not api_key:
+        logging.error("GEMINI_API_KEY not found in environment")
+        return get_fallback_suggestions()
+
+    genai.configure(api_key=api_key)
     
     # Prepare context for AI
-    objects_summary = f"Board contains {len(request.objects)} objects:\n"
-    for obj in request.objects[:10]:  # Limit to first 10 for context
-        objects_summary += f"- {obj.type}: {obj.data}\n"
+    objects_summary = f"Board contains {len(request.objects)} objects.\n"
+    # Show last few objects to save context window
+    context_objects = request.objects[-20:] if len(request.objects) > 20 else request.objects
+    for i, obj in enumerate(context_objects):
+        objects_summary += f"{i+1}. {obj.type} at ({obj.data.get('x',0)}, {obj.data.get('y',0)}) - data: {json.dumps(obj.data)}\n"
 
-    user_prompt = ""
     if request.context:
-        user_prompt = f"\nUser prompt:\n{request.context}\n"
-    
-        prompt = f"""You are an AI assistant for a collaborative whiteboard. Analyze the following drawing objects and user request.
+        # DIAGRAM GENERATOR PROMPT
+        prompt = f"""You are a professional Whiteboard Architect and Diagram Generator. 
+TASK: Convert the user's command into a set of shape creation actions.
 
+Board Status:
 {objects_summary}
-{user_prompt}
 
-TASK:
-If the user requests to CREATE shapes (e.g., "make a triangle", "draw 3 circles below", "add square"), return a JSON array of shape creation commands.
-Otherwise, provide 2-3 actionable suggestions to improve the diagram.
+User Command: "{request.context}"
 
-For shape creation, return format:
+TASK: Generate a diagram that satisfies the request.
+EXAMPLES:
+- "add a car": Use rectangles for body and circles for wheels.
+- "login flow": Use rectangles for 'Login Page', 'Check DB', 'Success' and connect them with arrows.
+
+RETURN JSON LIST:
+Each item MUST have "type": "shape_create" and an "action" field.
+"action" schema: 
+{{
+  "action": "create_shape",
+  "shape_type": "rectangle|circle|triangle|arrow|text|sticky",
+  "data": {{ 
+    "x": number, "y": number, "width": number, "height": number,
+     "fill": "color (eg #9D00FF)", "stroke": "#18181B", "text": "optional label",
+     "points": [x1, y1, x2, y2, ...] // FOR ARROWS/TRIANGLES: Required.
+  }}
+}}
+
+FORMAT:
 [
   {{
-    "action": "create_shape",
-    "shape_type": "triangle|circle|rectangle|arrow|text",
-    "quantity": 1,
-    "position": "center|below|above|left|right",
-    "reference": "triangle|circle|rectangle|last" (optional),
-    "text_content": "..." (only for text shapes)
+    "type": "shape_create",
+    "title": "Drawing [Name]",
+    "description": "Short explanation",
+    "action": {{ ... }}
   }}
 ]
 
-For suggestions, return format:
-[
-  {{
-    "type": "shape_clean|annotation|diagram_improvement",
-    "title": "short title (max 40 chars)",
-    "description": "detailed explanation (max 150 chars)"
-  }}
-]
-
-CRITICAL:
-- Detect CREATE requests vs IMPROVEMENT suggestions
-- For "make X", "draw X", "add X", "create X" → use action: create_shape
-- Support quantities: "three circles" → quantity: 3
-- Support positions: "below the triangle", "to the right" → position: below, reference: triangle
-- Return ONLY valid JSON (no markdown fences)
+Return ONLY VALID JSON. No extra text.
 """
-    
+    else:
+        # GENERAL SUGGESTION PROMPT
+        prompt = f"""You are an AI assistant for a collaborative whiteboard.
+Board Status:
+{objects_summary}
+
+TASK: Provide 2-3 suggestions to improve the board.
+RETURN JSON:
+[
+  {{
+    "type": "suggestion",
+    "title": "Title",
+    "description": "Advice",
+    "action": {{}}
+  }}
+]
+"""
+
     try:
-        # Call Gemini API
-        result = client.models.generate_content(
-            model='gemini-1.5-flash',
-            contents=prompt,
-            generation_config={
-                'temperature': 0.6,
-                'response_mime_type': 'application/json'
-            }
-        )
-
-        response_text = result.text.strip()
-
-        suggestions_data = json.loads(response_text)
+        # Try 2.0-flash as it is definitely in the list
+        try:
+            model = genai.GenerativeModel('models/gemini-2.0-flash')
+            response = model.generate_content(prompt)
+        except Exception:
+            # Fallback to gemini-pro-latest
+            model = genai.GenerativeModel('models/gemini-pro-latest')
+            response = model.generate_content(prompt)
         
-        suggestions = []
-        for sugg in suggestions_data:
-            # Check if this is a shape creation command
-            if sugg.get('action') == 'create_shape':
-                # Preserve the action data for shape creation
-                suggestions.append(AISuggestion(
-                    type='shape_create',
-                    title=sugg.get('title', 'Create Shape'),
-                    description=sugg.get('description', ''),
-                    action={
-                        'action': 'create_shape',
-                        'shape_type': sugg.get('shape_type', 'rectangle'),
-                        'quantity': sugg.get('quantity', 1),
-                        'position': sugg.get('position', 'center'),
-                        'reference': sugg.get('reference', 'last'),
-                        'text_content': sugg.get('text_content')
-                    }
-                ))
+        text = response.text.strip()
+        
+        # Clean up text from potential markdown formatting
+        if '```' in text:
+            # Find the first '[' and last ']' to extract JSON array
+            start = text.find('[')
+            end = text.rfind(']') + 1
+            if start != -1 and end != -1:
+                text = text[start:end]
             else:
-                # Regular suggestion
-                suggestions.append(AISuggestion(
-                    type=sugg.get('type', 'suggestion'),
-                    title=sugg.get('title', ''),
-                    description=sugg.get('description', ''),
-                    action=sugg.get('action', {})
-                ))
+                # If no brackets, try stripping just code blocks
+                if text.startswith('```json'): text = text[7:]
+                elif text.startswith('```'): text = text[3:]
+                if text.endswith('```'): text = text[:-3]
         
+        text = text.strip()
+        raw_results = json.loads(text)
+        
+        if not isinstance(raw_results, list):
+            raw_results = [raw_results]
+            
+        suggestions = []
+        for item in raw_results:
+            action = item.get('action', {})
+            # Detect if it's a creation action
+            is_create = item.get('type') == 'shape_create' or \
+                       (isinstance(action, dict) and action.get('action') == 'create_shape')
+            
+            suggestions.append(AISuggestion(
+                type='shape_create' if is_create else item.get('type', 'suggestion'),
+                title=item.get('title', 'AI Command'),
+                description=item.get('description', ''),
+                action=action if isinstance(action, dict) else {}
+            ))
+            
         return suggestions
+
     except Exception as e:
-        logging.error(f"AI suggestion error: {e}")
-        # Return fallback suggestions
-        return [
-            AISuggestion(
-                type="shape_clean",
-                title="Clean up shapes",
-                description="Use the shape tools to create perfect geometric forms",
-                action={}
-            ),
-            AISuggestion(
-                type="annotation",
-                title="Add labels",
-                description="Label important elements for better understanding",
-                action={}
-            )
-        ]
+        import traceback
+        logging.error(f"Gemini API Error: {str(e)}\n{traceback.format_exc()}")
+        return get_fallback_suggestions()
+
+def get_fallback_suggestions():
+    return [
+        AISuggestion(
+            type="shape_clean",
+            title="Clean up shapes",
+            description="Use the shape tools to create perfect geometric forms",
+            action={}
+        ),
+        AISuggestion(
+            type="annotation",
+            title="Add labels",
+            description="Label important elements for better understanding",
+            action={}
+        )
+    ]
 
 # ============= Socket.IO Events =============
 
@@ -476,6 +622,7 @@ async def disconnect(sid):
             del active_connections[board_id][sid]
             # Notify others
             await sio.emit('user_left', {
+                'sid': sid,
                 'user_id': user_data['user_id'],
                 'name': user_data['name']
             }, room=board_id, skip_sid=sid)
@@ -496,6 +643,7 @@ async def join_board(sid, data):
     
     # Add user to board
     active_connections[board_id][sid] = {
+        'sid': sid,
         'user_id': user_id,
         'name': name,
         'cursor': {'x': 0, 'y': 0}
@@ -506,14 +654,15 @@ async def join_board(sid, data):
     
     # Send current users to new user
     users = [
-        {'user_id': u['user_id'], 'name': u['name'], 'cursor': u['cursor']}
-        for u in active_connections[board_id].values()
-        if u['user_id'] != user_id
+        {'sid': conn_sid, 'user_id': u['user_id'], 'name': u['name'], 'cursor': u['cursor']}
+        for conn_sid, u in active_connections[board_id].items()
+        if conn_sid != sid
     ]
     await sio.emit('users_list', {'users': users}, to=sid)
     
     # Notify others
     await sio.emit('user_joined', {
+        'sid': sid,
         'user_id': user_id,
         'name': name
     }, room=board_id, skip_sid=sid)
@@ -527,6 +676,7 @@ async def cursor_move(sid, data):
         active_connections[board_id][sid]['cursor'] = cursor
         
         await sio.emit('cursor_moved', {
+            'sid': sid,
             'user_id': active_connections[board_id][sid]['user_id'],
             'cursor': cursor
         }, room=board_id, skip_sid=sid)

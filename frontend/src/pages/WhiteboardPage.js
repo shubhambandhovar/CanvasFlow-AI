@@ -8,7 +8,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Pencil, Square, Circle as CircleIcon, ArrowRight, Type, Hand, Eraser,
-  Undo, Redo, Users, Share2, Sparkles, Download, Menu, X, ChevronLeft
+  Undo, Redo, Users, Share2, Sparkles, Download, Menu, X, ChevronLeft,
+  Wifi, WifiOff, StickyNote, Grid3X3, Triangle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import axios from 'axios';
@@ -24,6 +25,8 @@ const TOOLS = {
   CIRCLE: 'circle',
   ARROW: 'arrow',
   TEXT: 'text',
+  STICKY: 'sticky',
+  TRIANGLE: 'triangle',
   ERASER: 'eraser'
 };
 
@@ -33,11 +36,11 @@ export const WhiteboardPage = () => {
   const { boardId, shareToken } = useParams();
   const { user } = useAuth();
   const navigate = useNavigate();
-  
+
   // Use shareToken if available, otherwise use boardId
   const currentBoardId = boardId || shareToken;
   const isSharedBoard = !!shareToken;
-  
+
   const [board, setBoard] = useState(null);
   const [objects, setObjects] = useState([]);
   const [boardVersion, setBoardVersion] = useState(0);
@@ -47,47 +50,58 @@ export const WhiteboardPage = () => {
   const [historyStep, setHistoryStep] = useState(0);
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentShape, setCurrentShape] = useState(null);
-  
+
   // Collaboration
   const [socket, setSocket] = useState(null);
   const [connectedUsers, setConnectedUsers] = useState([]);
   const [cursors, setCursors] = useState({});
-  
+
   // AI Panel
   const [showAI, setShowAI] = useState(false);
   const [aiSuggestions, setAiSuggestions] = useState([]);
   const [loadingAI, setLoadingAI] = useState(false);
-  
+
   // Custom AI Prompt Panel
   const [showCustomAI, setShowCustomAI] = useState(false);
   const [customPrompt, setCustomPrompt] = useState('');
   const [customSuggestions, setCustomSuggestions] = useState([]);
   const [loadingCustomAI, setLoadingCustomAI] = useState(false);
-  
+
   const [saving, setSaving] = useState(false);
-  
+  const [showGrid, setShowGrid] = useState(true);
+  const [bgType, setBgType] = useState('dots'); // none, dots, grid
+
   // Share dialog
   const [showShareDialog, setShowShareDialog] = useState(false);
-  
+
   const stageRef = useRef(null);
   const transformerRef = useRef(null);
   const layerRef = useRef(null);
+  const socketRef = useRef(null);
+  const lastToastTimeRef = useRef(0);
 
   useEffect(() => {
+    let mounted = true;
+    let localSocket = null;
+
     const loadBoard = async () => {
       try {
-        // Use different endpoint for shared boards
-        const endpoint = isSharedBoard 
+        const endpoint = isSharedBoard
           ? `${API}/boards/share/${shareToken}`
           : `${API}/boards/${boardId}`;
-        
+
         const response = await axios.get(endpoint);
+        if (!mounted) return;
+        
         console.log('Board loaded:', response.data);
         setBoard(response.data);
         setObjects(response.data.objects || []);
         setBoardVersion(response.data.version || 0);
         setHistory([response.data.objects || []]);
         setHistoryStep(0);
+        
+        // Initialize socket only after board is loaded so we have the real board.id
+        localSocket = setupSocket(response.data.id);
       } catch (error) {
         console.error('Failed to load board:', error);
         toast.error('Failed to load board');
@@ -95,7 +109,7 @@ export const WhiteboardPage = () => {
       }
     };
 
-    const setupSocket = () => {
+    const setupSocket = (resolvedBoardId) => {
       const newSocket = io(BACKEND_URL, {
         transports: ['websocket', 'polling'],
         reconnection: true,
@@ -105,12 +119,18 @@ export const WhiteboardPage = () => {
       });
 
       newSocket.on('connect', () => {
-        console.log('Socket connected:', newSocket.id);
-        toast.success('Connected to board');
-        // Use board.id when available, otherwise currentBoardId
-        const boardIdToUse = board?.id || currentBoardId;
+        const now = Date.now();
+        if (now - lastToastTimeRef.current > 2000) {
+          console.log('Socket connected:', newSocket.id);
+          toast('Sync Connected', {
+            icon: <Wifi className="w-4 h-4 text-green-500" />,
+            className: "bg-white dark:bg-black border-none shadow-lg",
+          });
+          lastToastTimeRef.current = now;
+        }
+        
         newSocket.emit('join_board', {
-          board_id: boardIdToUse,
+          board_id: resolvedBoardId,
           user_id: user.id,
           name: user.name
         });
@@ -121,9 +141,15 @@ export const WhiteboardPage = () => {
         toast.error('Connection error: ' + error.message);
       });
 
-      newSocket.on('disconnect', () => {
-        console.log('Socket disconnected');
-        toast.error('Disconnected from board');
+      newSocket.on('disconnect', (reason) => {
+        console.log('Socket disconnected:', reason);
+        if (reason !== 'io client disconnect') {
+          toast('Sync Paused', {
+            icon: <WifiOff className="w-4 h-4 text-muted-foreground" />,
+            description: "Working offline until reconnected.",
+            className: "bg-white dark:bg-black border-none shadow-lg",
+          });
+        }
       });
 
       newSocket.on('users_list', (data) => {
@@ -132,15 +158,18 @@ export const WhiteboardPage = () => {
 
       newSocket.on('user_joined', (data) => {
         toast.success(`${data.name} joined the board`);
-        setConnectedUsers(prev => [...prev, { user_id: data.user_id, name: data.name, cursor: { x: 0, y: 0 } }]);
+        setConnectedUsers(prev => {
+          if (prev.find(u => u.sid === data.sid)) return prev;
+          return [...prev, { sid: data.sid, user_id: data.user_id, name: data.name, cursor: { x: 0, y: 0 } }];
+        });
       });
 
       newSocket.on('user_left', (data) => {
         toast.info(`${data.name} left the board`);
-        setConnectedUsers(prev => prev.filter(u => u.user_id !== data.user_id));
+        setConnectedUsers(prev => prev.filter(u => u.sid !== data.sid));
         setCursors(prev => {
           const newCursors = { ...prev };
-          delete newCursors[data.user_id];
+          delete newCursors[data.sid];
           return newCursors;
         });
       });
@@ -148,28 +177,38 @@ export const WhiteboardPage = () => {
       newSocket.on('cursor_moved', (data) => {
         setCursors(prev => ({
           ...prev,
-          [data.user_id]: data.cursor
+          [data.sid]: data.cursor
         }));
       });
 
       newSocket.on('board_updated', (data) => {
-        // Only update if version is newer
-        if (data.version > boardVersion) {
-          setObjects(data.objects || []);
-          setBoardVersion(data.version);
-        }
+        setBoardVersion(currentVersion => {
+          if (data.version > currentVersion) {
+            setObjects(data.objects || []);
+            return data.version;
+          }
+          return currentVersion;
+        });
       });
 
+      socketRef.current = newSocket;
       setSocket(newSocket);
+      return newSocket;
     };
 
     loadBoard();
-    setupSocket();
-    
+
     return () => {
-      if (socket) socket.disconnect();
+      mounted = false;
+      if (localSocket) {
+        localSocket.disconnect();
+      }
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
     };
-  }, []);
+  }, [boardId, shareToken, isSharedBoard, navigate]);
 
   useEffect(() => {
     if (selectedId && transformerRef.current) {
@@ -190,13 +229,15 @@ export const WhiteboardPage = () => {
   };
 
   const broadcastUpdate = (newObjects) => {
-    if (socket) {
-      const nextVersion = boardVersion + 1;
-      setBoardVersion(nextVersion);
-      socket.emit('board_update', {
-        board_id: board?.id || currentBoardId,
-        objects: newObjects,
-        version: nextVersion
+    if (socketRef.current) {
+      setBoardVersion(prevVersion => {
+        const nextVersion = prevVersion + 1;
+        socketRef.current.emit('board_update', {
+          board_id: board?.id || currentBoardId,
+          objects: newObjects,
+          version: nextVersion
+        });
+        return nextVersion;
       });
     }
   };
@@ -205,6 +246,35 @@ export const WhiteboardPage = () => {
     setObjects(newObjects);
     saveToHistory(newObjects);
     broadcastUpdate(newObjects);
+  };
+
+  const handleDownload = () => {
+    // Get transparent PNG from stage first to preserve quality
+    const uri = stageRef.current.toDataURL({ pixelRatio: 2 });
+    
+    // Draw onto a white canvas to prevent black background in JPG
+    const img = new window.Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(img, 0, 0);
+      
+      const jpegUri = canvas.toDataURL('image/jpeg', 1.0);
+      
+      const link = document.createElement('a');
+      link.download = `canvasflow-${board?.title || 'board'}.jpg`;
+      link.href = jpegUri;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('Board exported as JPG');
+    };
+    img.src = uri;
   };
 
   const handleManualSave = () => {
@@ -272,22 +342,81 @@ export const WhiteboardPage = () => {
   const applyShapeClean = (target) => {
     const box = getBoundingBox(target);
     if (!box) return false;
-    const rect = {
-      id: `rect-${Date.now()}`,
-      type: TOOLS.RECTANGLE,
-      data: {
-        x: box.x,
-        y: box.y,
-        width: box.width,
-        height: box.height,
-        stroke: '#18181B',
-        strokeWidth: 2,
-        fill: 'transparent'
+
+    let cleanShape = null;
+    const { x: bx, y: by, width, height } = box;
+    const centerX = bx + width / 2;
+    const centerY = by + height / 2;
+
+    if (target.type === TOOLS.PEN) {
+      const pts = target.data.points || [];
+      const totalPoints = pts.length / 2;
+      
+      // Radius Variation Analysis (Robust Circle Detection)
+      let sumRadius = 0;
+      const radii = [];
+      for (let i = 0; i < pts.length; i += 2) {
+        const r = Math.sqrt(Math.pow(pts[i] - centerX, 2) + Math.pow(pts[i+1] - centerY, 2));
+        radii.push(r);
+        sumRadius += r;
       }
-    };
-    const newObjects = objects.filter(o => o.id !== target.id).concat(rect);
+      
+      const meanRadius = sumRadius / totalPoints;
+      let sumSqDiff = 0;
+      for (const r of radii) {
+        sumSqDiff += Math.pow(r - meanRadius, 2);
+      }
+      
+      const stdDev = Math.sqrt(sumSqDiff / totalPoints);
+      const variation = stdDev / meanRadius; // Coefficient of variation
+
+      // Detection Thresholds:
+      // Circle typically has < 12% variation
+      // Square has ~11-15% variation
+      // Triangle has > 20% variation
+      
+      if (variation < 0.12) {
+        // High confidence Circle
+        cleanShape = {
+          id: `circle-${Date.now()}`,
+          type: TOOLS.CIRCLE,
+          data: { x: centerX, y: centerY, radius: meanRadius, stroke: '#18181B', strokeWidth: 2, fill: 'transparent' }
+        };
+      } else if (variation > 0.18) {
+        // High confidence Triangle
+        cleanShape = {
+          id: `tri-${Date.now()}`,
+          type: TOOLS.PEN,
+          data: {
+            points: [centerX, by, bx, by + height, bx + width, by + height, centerX, by],
+            stroke: '#18181B',
+            strokeWidth: 2,
+            fill: 'transparent',
+            closed: true
+          }
+        };
+      } else {
+        // Square/Rectangle
+        cleanShape = {
+          id: `rect-${Date.now()}`,
+          type: TOOLS.RECTANGLE,
+          data: { x: bx, y: by, width, height, stroke: '#18181B', strokeWidth: 2, fill: 'transparent' }
+        };
+      }
+    }
+
+    // Default fallback
+    if (!cleanShape) {
+      cleanShape = {
+        id: `rect-${Date.now()}`,
+        type: TOOLS.RECTANGLE,
+        data: { x: bx, y: by, width, height, stroke: '#18181B', strokeWidth: 2, fill: 'transparent' }
+      };
+    }
+
+    const newObjects = objects.filter(o => o.id !== target.id).concat(cleanShape);
     commitObjects(newObjects);
-    setSelectedId(rect.id);
+    setSelectedId(cleanShape.id);
     return true;
   };
 
@@ -417,7 +546,15 @@ export const WhiteboardPage = () => {
         strokeWidth: 2,
         fill: '#18181B'
       };
-    } else if (selectedTool === TOOLS.TEXT) {
+    } else if (selectedTool === TOOLS.TRIANGLE) {
+        newShape.data = {
+          points: [pointerPos.x, pointerPos.y, pointerPos.x, pointerPos.y, pointerPos.x, pointerPos.y, pointerPos.x, pointerPos.y],
+          stroke: '#18181B',
+          strokeWidth: 2,
+          fill: 'transparent',
+          closed: true
+        };
+      } else if (selectedTool === TOOLS.TEXT) {
       const text = prompt('Enter text:');
       if (text) {
         newShape.data = {
@@ -426,6 +563,30 @@ export const WhiteboardPage = () => {
           text: text,
           fontSize: 20,
           fill: '#18181B'
+        };
+        const newObjects = [...objects, newShape];
+        setObjects(newObjects);
+        saveToHistory(newObjects);
+        broadcastUpdate(newObjects);
+      }
+      setIsDrawing(false);
+      return;
+    } else if (selectedTool === TOOLS.STICKY) {
+      const text = prompt('Enter note text:');
+      if (text) {
+        const colors = ['#FEF3C7', '#DBEAFE', '#FCE7F3', '#DCFCE7'];
+        const randomColor = colors[Math.floor(Math.random() * colors.length)];
+        newShape.data = {
+          x: pointerPos.x - 75,
+          y: pointerPos.y - 75,
+          width: 150,
+          height: 150,
+          text: text,
+          fill: randomColor,
+          stroke: '#FCD34D',
+          strokeWidth: 1,
+          shadowBlur: 5,
+          shadowOpacity: 0.1
         };
         const newObjects = [...objects, newShape];
         setObjects(newObjects);
@@ -465,6 +626,18 @@ export const WhiteboardPage = () => {
       const dx = pointerPos.x - updatedShape.data.x;
       const dy = pointerPos.y - updatedShape.data.y;
       updatedShape.data.radius = Math.sqrt(dx * dx + dy * dy);
+    } else if (selectedTool === TOOLS.TRIANGLE) {
+      const startX = updatedShape.data.points[0];
+      const startY = updatedShape.data.points[1];
+      const currentX = pointerPos.x;
+      const currentY = pointerPos.y;
+      const width = currentX - startX;
+      updatedShape.data.points = [
+        startX + width / 2, startY,
+        startX, currentY,
+        currentX, currentY,
+        startX + width / 2, startY
+      ];
     } else if (selectedTool === TOOLS.ARROW) {
       updatedShape.data.points = [
         updatedShape.data.points[0],
@@ -484,7 +657,7 @@ export const WhiteboardPage = () => {
     setObjects(newObjects);
     saveToHistory(newObjects);
     broadcastUpdate(newObjects);
-    
+
     setIsDrawing(false);
     setCurrentShape(null);
   };
@@ -551,20 +724,20 @@ export const WhiteboardPage = () => {
     let centerY = (window.innerHeight - 120) / 2;
     const baseSize = 150;
     const spacing = 50;
-    
+
     // Parse quantity
     const quantityMap = {
       'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
       'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10
     };
-    
+
     let quantity = 1;
     const numberMatch = lowerPrompt.match(/(\d+|one|two|three|four|five|six|seven|eight|nine|ten)/);
     if (numberMatch) {
       const num = numberMatch[1];
       quantity = quantityMap[num] || parseInt(num) || 1;
     }
-    
+
     // Parse spatial relationships
     let referenceObj = null;
     if (lowerPrompt.includes('below') || lowerPrompt.includes('under') || lowerPrompt.includes('beneath')) {
@@ -579,7 +752,7 @@ export const WhiteboardPage = () => {
       if (!referenceObj && objects.length > 0) {
         referenceObj = objects[objects.length - 1];
       }
-      
+
       if (referenceObj) {
         if (referenceObj.type === TOOLS.CIRCLE) {
           centerX = referenceObj.data.x;
@@ -606,7 +779,7 @@ export const WhiteboardPage = () => {
       if (!referenceObj && objects.length > 0) {
         referenceObj = objects[objects.length - 1];
       }
-      
+
       if (referenceObj) {
         if (referenceObj.type === TOOLS.CIRCLE) {
           centerX = referenceObj.data.x;
@@ -645,12 +818,12 @@ export const WhiteboardPage = () => {
         }
       }
     }
-    
+
     let newShape = null;
-    
+
     // Detect what shape to create
     const shapeToCreate = lowerPrompt.match(/(?:make|create|draw|add)\s+(?:a\s+)?(\w+)/)?.[1];
-    
+
     if (shapeToCreate === 'triangle' || (!shapeToCreate && lowerPrompt.includes('triangle'))) {
       const height = baseSize;
       const width = baseSize;
@@ -659,10 +832,10 @@ export const WhiteboardPage = () => {
         type: TOOLS.PEN,
         data: {
           points: [
-            centerX, centerY - height/2,
-            centerX - width/2, centerY + height/2,
-            centerX + width/2, centerY + height/2,
-            centerX, centerY - height/2
+            centerX, centerY - height / 2,
+            centerX - width / 2, centerY + height / 2,
+            centerX + width / 2, centerY + height / 2,
+            centerX, centerY - height / 2
           ],
           stroke: '#18181B',
           strokeWidth: 2,
@@ -681,8 +854,8 @@ export const WhiteboardPage = () => {
           strokeWidth: 2
         }
       };
-    } else if (shapeToCreate === 'rectangle' || shapeToCreate === 'square' || 
-               (!shapeToCreate && (lowerPrompt.includes('rectangle') || lowerPrompt.includes('square')))) {
+    } else if (shapeToCreate === 'rectangle' || shapeToCreate === 'square' ||
+      (!shapeToCreate && (lowerPrompt.includes('rectangle') || lowerPrompt.includes('square')))) {
       newShape = {
         id: `shape-${Date.now()}`,
         type: TOOLS.RECTANGLE,
@@ -706,8 +879,8 @@ export const WhiteboardPage = () => {
           fill: '#18181B'
         }
       };
-    } else if (shapeToCreate === 'text' || shapeToCreate === 'label' || 
-               (!shapeToCreate && (lowerPrompt.includes('text') || lowerPrompt.includes('label')))) {
+    } else if (shapeToCreate === 'text' || shapeToCreate === 'label' ||
+      (!shapeToCreate && (lowerPrompt.includes('text') || lowerPrompt.includes('label')))) {
       const textMatch = prompt.match(/["'](.+?)["']|text:\s*(.+?)(?:\s|$)|label:\s*(.+?)(?:\s|$)/i);
       const textContent = textMatch ? (textMatch[1] || textMatch[2] || textMatch[3]) : 'Text';
       newShape = {
@@ -722,23 +895,23 @@ export const WhiteboardPage = () => {
         }
       };
     }
-    
+
     if (newShape) {
       // Create multiple shapes if quantity > 1
       const shapesToCreate = [];
       for (let i = 0; i < quantity; i++) {
         let offsetX = 0;
         let offsetY = 0;
-        
+
         // Position shapes in a row
         if (quantity > 1) {
           const totalWidth = (baseSize + spacing) * quantity - spacing;
           offsetX = (i * (baseSize + spacing)) - totalWidth / 2 + baseSize / 2;
         }
-        
+
         const shapeInstance = JSON.parse(JSON.stringify(newShape));
         shapeInstance.id = `shape-${Date.now()}-${i}`;
-        
+
         // Adjust position based on shape type
         if (shapeInstance.type === TOOLS.CIRCLE) {
           shapeInstance.data.x += offsetX;
@@ -747,21 +920,21 @@ export const WhiteboardPage = () => {
           shapeInstance.data.x += offsetX;
           shapeInstance.data.y += offsetY;
         } else if (shapeInstance.type === TOOLS.PEN && shapeInstance.data.points) {
-          shapeInstance.data.points = shapeInstance.data.points.map((val, idx) => 
+          shapeInstance.data.points = shapeInstance.data.points.map((val, idx) =>
             idx % 2 === 0 ? val + offsetX : val + offsetY
           );
         } else if (shapeInstance.type === TOOLS.ARROW) {
-          shapeInstance.data.points = shapeInstance.data.points.map((val, idx) => 
+          shapeInstance.data.points = shapeInstance.data.points.map((val, idx) =>
             idx % 2 === 0 ? val + offsetX : val + offsetY
           );
         } else if (shapeInstance.type === TOOLS.TEXT) {
           shapeInstance.data.x += offsetX;
           shapeInstance.data.y += offsetY;
         }
-        
+
         shapesToCreate.push(shapeInstance);
       }
-      
+
       const newObjects = [...objects, ...shapesToCreate];
       commitObjects(newObjects);
       setSelectedId(shapesToCreate[shapesToCreate.length - 1].id);
@@ -771,15 +944,107 @@ export const WhiteboardPage = () => {
     return false;
   };
 
+  const executeShapeCommand = (action, currentObjects) => {
+    const { shape_type, position, reference, text_content, quantity = 1, width: w, height: h } = action;
+
+    // Default dimensions
+    const baseSize = 150;
+    const defaultW = w || baseSize;
+    const defaultH = h || baseSize;
+    const spacing = 50;
+
+    let generatedShapes = [];
+
+    for (let i = 0; i < quantity; i++) {
+      let centerX = window.innerWidth / 2;
+      let centerY = (window.innerHeight - 120) / 2;
+
+      // Smart positioning
+      if (reference === 'last' && currentObjects.length > 0) {
+        const lastObj = currentObjects[currentObjects.length - 1];
+        const box = getBoundingBox(lastObj);
+
+        if (box) {
+          if (position === 'right') {
+            centerX = box.x + box.width + defaultW / 2 + spacing;
+            centerY = box.y + box.height / 2;
+          } else if (position === 'below') {
+            centerX = box.x + box.width / 2;
+            centerY = box.y + box.height + defaultH / 2 + spacing;
+          } else if (position === 'left') {
+            centerX = box.x - defaultW / 2 - spacing;
+            centerY = box.y + box.height / 2;
+          } else if (position === 'above') {
+            centerX = box.x + box.width / 2;
+            centerY = box.y - defaultH / 2 - spacing;
+          }
+        }
+      }
+
+      // Adjust for multiple quantity in a row if generating multiple
+      if (quantity > 1) {
+        // For simplicity, just offset X
+        centerX += (i * (defaultW + spacing));
+      }
+
+      let newShape = null;
+      const id = `shape-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+      if (shape_type === 'rectangle' || shape_type === 'square') {
+        newShape = {
+          id, type: TOOLS.RECTANGLE,
+          data: { x: centerX - defaultW / 2, y: centerY - defaultH / 2, width: defaultW, height: defaultH, stroke: '#18181B', strokeWidth: 2, fill: 'transparent' }
+        };
+      } else if (shape_type === 'circle') {
+        newShape = {
+          id, type: TOOLS.CIRCLE,
+          data: { x: centerX, y: centerY, radius: defaultW / 2, stroke: '#18181B', strokeWidth: 2, fill: 'transparent' }
+        };
+      } else if (shape_type === 'triangle') {
+        newShape = {
+          id, type: TOOLS.PEN,
+          data: {
+            points: [centerX, centerY - defaultH / 2, centerX - defaultW / 2, centerY + defaultH / 2, centerX + defaultW / 2, centerY + defaultH / 2, centerX, centerY - defaultH / 2],
+            stroke: '#18181B', strokeWidth: 2, closed: true
+          }
+        };
+      } else if (shape_type === 'line') {
+        newShape = {
+          id, type: TOOLS.PEN,
+          data: { points: [centerX - defaultW / 2, centerY, centerX + defaultW / 2, centerY], stroke: '#18181B', strokeWidth: 2 }
+        };
+      } else if (shape_type === 'arrow') {
+        newShape = {
+          id, type: TOOLS.ARROW,
+          data: { points: [centerX - defaultW / 2, centerY, centerX + defaultW / 2, centerY], stroke: '#18181B', strokeWidth: 2, fill: '#18181B' }
+        };
+      } else if (shape_type === 'text') {
+        newShape = {
+          id, type: TOOLS.TEXT,
+          data: { x: centerX - defaultW / 2, y: centerY - 12, text: text_content || 'Text', fontSize: 24, fill: '#18181B' }
+        };
+      }
+
+      if (newShape) {
+        generatedShapes.push(newShape);
+        // Important: Update the currentObjects reference so subsequent steps in the same AI response 
+        // (like wheels after a car body) can reference this new shape as "last".
+        currentObjects.push(newShape);
+      }
+    }
+
+    return generatedShapes;
+  };
+
   const handleCustomPrompt = async () => {
     const trimmedPrompt = customPrompt.trim();
     if (!trimmedPrompt) {
       toast.error('Enter a prompt to run');
       return;
     }
-    
+
     setLoadingCustomAI(true);
-    
+
     // First try local parsing for common commands
     const localCreated = createShapeFromPrompt(trimmedPrompt);
     if (localCreated) {
@@ -787,7 +1052,7 @@ export const WhiteboardPage = () => {
       setLoadingCustomAI(false);
       return;
     }
-    
+
     // Fall back to AI for complex commands
     try {
       const response = await axios.post(`${API}/ai/suggestions`, {
@@ -795,25 +1060,31 @@ export const WhiteboardPage = () => {
         objects,
         context: trimmedPrompt
       });
-      
+      console.log('AI Response:', response.data);
+
       const results = response.data;
-      
+
       // Check if any results contain shape creation actions
-      const hasCreateActions = results && results.length > 0 && 
-        results.some(r => r.action && typeof r.action === 'object' && r.action.action === 'create_shape');
-      
+      const hasCreateActions = results && results.length > 0 &&
+        results.some(r => (r.action === 'create_shape') || (r.action && typeof r.action === 'object' && r.action.action === 'create_shape'));
+
       if (hasCreateActions) {
         // Execute shape creation commands
         let shapesCreated = 0;
-        
+        let currentObjects = [...objects]; // Start with local copy
+
         for (const result of results) {
-          if (result.action && result.action.action === 'create_shape') {
-            const created = executeShapeCommand(result.action);
-            if (created) shapesCreated++;
+          const actionData = result.action === 'create_shape' ? result : result.action;
+          if (actionData && actionData.action === 'create_shape') {
+            const newShapes = executeShapeCommand(actionData, currentObjects);
+            if (newShapes && newShapes.length > 0) {
+              shapesCreated += newShapes.length;
+            }
           }
         }
-        
+
         if (shapesCreated > 0) {
+          commitObjects(currentObjects); // Commit all changes at once
           toast.success(`${shapesCreated} shape${shapesCreated > 1 ? 's' : ''} created!`);
         } else {
           toast.error('Could not create shapes from your request');
@@ -827,7 +1098,7 @@ export const WhiteboardPage = () => {
           toast.info('No suggestions available');
         }
       }
-      
+
       setCustomPrompt('');
     } catch (error) {
       toast.error('Failed to process your request');
@@ -837,191 +1108,7 @@ export const WhiteboardPage = () => {
     }
   };
 
-  const executeShapeCommand = (command) => {
-    const baseSize = 150;
-    const spacing = 50;
-    let centerX = window.innerWidth / 2;
-    let centerY = (window.innerHeight - 120) / 2;
-    
-    // Calculate position based on reference
-    if (command.position && command.position !== 'center') {
-      let referenceObj = null;
-      
-      if (command.reference === 'last' || !command.reference) {
-        referenceObj = objects.length > 0 ? objects[objects.length - 1] : null;
-      } else {
-        // Find by type
-        const refType = command.reference;
-        if (refType === 'triangle') {
-          referenceObj = [...objects].reverse().find(obj => obj.type === TOOLS.PEN && obj.data.closed);
-        } else if (refType === 'circle') {
-          referenceObj = [...objects].reverse().find(obj => obj.type === TOOLS.CIRCLE);
-        } else if (refType === 'rectangle' || refType === 'square') {
-          referenceObj = [...objects].reverse().find(obj => obj.type === TOOLS.RECTANGLE);
-        }
-      }
-      
-      if (referenceObj) {
-        if (command.position === 'below') {
-          if (referenceObj.type === TOOLS.CIRCLE) {
-            centerX = referenceObj.data.x;
-            centerY = referenceObj.data.y + referenceObj.data.radius + baseSize / 2 + spacing;
-          } else if (referenceObj.type === TOOLS.RECTANGLE) {
-            centerX = referenceObj.data.x + referenceObj.data.width / 2;
-            centerY = referenceObj.data.y + referenceObj.data.height + baseSize / 2 + spacing;
-          } else if (referenceObj.type === TOOLS.PEN && referenceObj.data.points) {
-            const points = referenceObj.data.points;
-            const maxY = Math.max(...points.filter((_, i) => i % 2 === 1));
-            const avgX = points.filter((_, i) => i % 2 === 0).reduce((a, b) => a + b, 0) / (points.length / 2);
-            centerX = avgX;
-            centerY = maxY + baseSize / 2 + spacing;
-          }
-        } else if (command.position === 'above') {
-          if (referenceObj.type === TOOLS.CIRCLE) {
-            centerX = referenceObj.data.x;
-            centerY = referenceObj.data.y - referenceObj.data.radius - baseSize / 2 - spacing;
-          } else if (referenceObj.type === TOOLS.RECTANGLE) {
-            centerX = referenceObj.data.x + referenceObj.data.width / 2;
-            centerY = referenceObj.data.y - baseSize / 2 - spacing;
-          } else if (referenceObj.type === TOOLS.PEN && referenceObj.data.points) {
-            const points = referenceObj.data.points;
-            const minY = Math.min(...points.filter((_, i) => i % 2 === 1));
-            const avgX = points.filter((_, i) => i % 2 === 0).reduce((a, b) => a + b, 0) / (points.length / 2);
-            centerX = avgX;
-            centerY = minY - baseSize / 2 - spacing;
-          }
-        } else if (command.position === 'right') {
-          if (referenceObj.type === TOOLS.CIRCLE) {
-            centerX = referenceObj.data.x + referenceObj.data.radius + baseSize / 2 + spacing;
-            centerY = referenceObj.data.y;
-          } else if (referenceObj.type === TOOLS.RECTANGLE) {
-            centerX = referenceObj.data.x + referenceObj.data.width + baseSize / 2 + spacing;
-            centerY = referenceObj.data.y + referenceObj.data.height / 2;
-          }
-        } else if (command.position === 'left') {
-          if (referenceObj.type === TOOLS.CIRCLE) {
-            centerX = referenceObj.data.x - referenceObj.data.radius - baseSize / 2 - spacing;
-            centerY = referenceObj.data.y;
-          } else if (referenceObj.type === TOOLS.RECTANGLE) {
-            centerX = referenceObj.data.x - baseSize / 2 - spacing;
-            centerY = referenceObj.data.y + referenceObj.data.height / 2;
-          }
-        }
-      }
-    }
-    
-    let baseShape = null;
-    
-    // Create base shape
-    if (command.shape_type === 'triangle') {
-      const height = baseSize;
-      const width = baseSize;
-      baseShape = {
-        id: `shape-${Date.now()}`,
-        type: TOOLS.PEN,
-        data: {
-          points: [
-            centerX, centerY - height/2,
-            centerX - width/2, centerY + height/2,
-            centerX + width/2, centerY + height/2,
-            centerX, centerY - height/2
-          ],
-          stroke: '#18181B',
-          strokeWidth: 2,
-          closed: true
-        }
-      };
-    } else if (command.shape_type === 'circle') {
-      baseShape = {
-        id: `shape-${Date.now()}`,
-        type: TOOLS.CIRCLE,
-        data: {
-          x: centerX,
-          y: centerY,
-          radius: baseSize / 2,
-          stroke: '#18181B',
-          strokeWidth: 2
-        }
-      };
-    } else if (command.shape_type === 'rectangle' || command.shape_type === 'square') {
-      baseShape = {
-        id: `shape-${Date.now()}`,
-        type: TOOLS.RECTANGLE,
-        data: {
-          x: centerX - baseSize / 2,
-          y: centerY - baseSize / 2,
-          width: baseSize,
-          height: baseSize,
-          stroke: '#18181B',
-          strokeWidth: 2
-        }
-      };
-    } else if (command.shape_type === 'arrow') {
-      baseShape = {
-        id: `shape-${Date.now()}`,
-        type: TOOLS.ARROW,
-        data: {
-          points: [centerX - 100, centerY, centerX + 100, centerY],
-          stroke: '#18181B',
-          strokeWidth: 2,
-          fill: '#18181B'
-        }
-      };
-    } else if (command.shape_type === 'text') {
-      baseShape = {
-        id: `shape-${Date.now()}`,
-        type: TOOLS.TEXT,
-        data: {
-          x: centerX - 50,
-          y: centerY - 20,
-          text: command.text_content || 'Text',
-          fontSize: 24,
-          fill: '#18181B'
-        }
-      };
-    }
-    
-    if (!baseShape) return false;
-    
-    // Create multiple if quantity > 1
-    const quantity = command.quantity || 1;
-    const shapesToCreate = [];
-    
-    for (let i = 0; i < quantity; i++) {
-      let offsetX = 0;
-      
-      if (quantity > 1) {
-        const totalWidth = (baseSize + spacing) * quantity - spacing;
-        offsetX = (i * (baseSize + spacing)) - totalWidth / 2 + baseSize / 2;
-      }
-      
-      const shapeInstance = JSON.parse(JSON.stringify(baseShape));
-      shapeInstance.id = `shape-${Date.now()}-${i}`;
-      
-      if (shapeInstance.type === TOOLS.CIRCLE) {
-        shapeInstance.data.x += offsetX;
-      } else if (shapeInstance.type === TOOLS.RECTANGLE) {
-        shapeInstance.data.x += offsetX;
-      } else if (shapeInstance.type === TOOLS.PEN && shapeInstance.data.points) {
-        shapeInstance.data.points = shapeInstance.data.points.map((val, idx) => 
-          idx % 2 === 0 ? val + offsetX : val
-        );
-      } else if (shapeInstance.type === TOOLS.ARROW) {
-        shapeInstance.data.points = shapeInstance.data.points.map((val, idx) => 
-          idx % 2 === 0 ? val + offsetX : val
-        );
-      } else if (shapeInstance.type === TOOLS.TEXT) {
-        shapeInstance.data.x += offsetX;
-      }
-      
-      shapesToCreate.push(shapeInstance);
-    }
-    
-    const newObjects = [...objects, ...shapesToCreate];
-    commitObjects(newObjects);
-    setSelectedId(shapesToCreate[shapesToCreate.length - 1].id);
-    return true;
-  };
+
 
   const handleAcceptSuggestion = (suggestion) => {
     const applied = applySuggestion(suggestion);
@@ -1091,6 +1178,32 @@ export const WhiteboardPage = () => {
         return <Arrow key={obj.id} {...commonProps} {...obj.data} pointerLength={10} pointerWidth={10} hitStrokeWidth={20} />;
       case TOOLS.TEXT:
         return <Text key={obj.id} {...commonProps} {...obj.data} />;
+      case TOOLS.STICKY:
+        return (
+          <React.Fragment key={obj.id}>
+            <Rect 
+              {...commonProps} 
+              {...obj.data} 
+              text={undefined} 
+              cornerRadius={4}
+            />
+            <Text 
+              {...obj.data}
+              draggable={false}
+              listening={false}
+              width={obj.data.width - 20}
+              height={obj.data.height - 20}
+              align="center"
+              verticalAlign="middle"
+              onClick={undefined}
+              text={obj.data.text}
+              padding={10}
+              fontSize={14}
+              fontFamily="Permanent Marker, cursive"
+              fill="#52525B"
+            />
+          </React.Fragment>
+        );
       default:
         return null;
     }
@@ -1121,8 +1234,19 @@ export const WhiteboardPage = () => {
           </Button>
           <h1 className="text-lg font-semibold" data-testid="board-title">{board.title}</h1>
         </div>
-        
+
         <div className="flex items-center gap-3">
+          {/* Background Toggle */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setBgType(prev => prev === 'dots' ? 'grid' : prev === 'grid' ? 'none' : 'dots')}
+            className="rounded-full h-9 w-9 p-0 text-muted-foreground"
+            title="Toggle Background"
+          >
+            <Grid3X3 className="w-4 h-4" />
+          </Button>
+
           {/* Undo/Redo */}
           <div className="flex gap-1">
             <Button
@@ -1148,9 +1272,22 @@ export const WhiteboardPage = () => {
           </div>
 
           {/* Users */}
-          <div className="flex items-center gap-2" data-testid="connected-users">
+          <div className="relative group flex items-center gap-2 cursor-pointer glass px-3 py-1.5 rounded-full" data-testid="connected-users">
             <Users className="w-4 h-4 text-muted-foreground" />
-            <span className="text-sm text-muted-foreground">{connectedUsers.length + 1}</span>
+            <span className="text-sm font-medium">{connectedUsers.length + 1}</span>
+            <div className="absolute top-full mt-2 right-0 w-48 bg-white dark:bg-[#0A1929] border shadow-lg rounded-xl p-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+              <div className="text-xs font-semibold text-muted-foreground mb-2 px-2">Connected Users</div>
+              <div className="flex items-center gap-2 px-2 py-1.5 text-sm">
+                <div className="w-2 h-2 rounded-full bg-green-500" />
+                <span className="truncate">You ({user?.name || 'User'})</span>
+              </div>
+              {connectedUsers.map(u => (
+                <div key={u.sid} className="flex items-center gap-2 px-2 py-1.5 text-sm border-t border-black/5 dark:border-white/5">
+                  <div className="w-2 h-2 rounded-full bg-blue-500" />
+                  <span className="truncate">{u.name} {u.user_id === user?.id ? "(Another session)" : ""}</span>
+                </div>
+              ))}
+            </div>
           </div>
 
           {/* AI Buttons */}
@@ -1165,7 +1302,7 @@ export const WhiteboardPage = () => {
             <Sparkles className="w-4 h-4 mr-2" />
             {loadingAI ? 'Loading...' : 'AI Suggestions'}
           </Button>
-          
+
           <Button
             variant="ghost"
             size="sm"
@@ -1199,11 +1336,33 @@ export const WhiteboardPage = () => {
             <Share2 className="w-4 h-4 mr-2" />
             Share
           </Button>
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleDownload}
+            className="rounded-full h-9 w-9 p-0"
+            title="Download Image"
+          >
+            <Download className="w-4 h-4" />
+          </Button>
         </div>
       </div>
 
       {/* Canvas */}
-      <div className="flex-1 relative" data-testid="canvas-container">
+      <div className="flex-1 relative bg-white dark:bg-slate-950" data-testid="canvas-container">
+        {/* Background Pattern */}
+        {bgType !== 'none' && (
+          <div 
+            className="absolute inset-0 pointer-events-none opacity-[0.4] dark:opacity-[0.1]"
+            style={{
+              backgroundImage: bgType === 'dots' 
+                ? 'radial-gradient(#64748b 0.5px, transparent 0.5px)' 
+                : 'linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)',
+              backgroundSize: bgType === 'dots' ? '20px 20px' : '40px 40px'
+            }}
+          />
+        )}
         <Stage
           ref={stageRef}
           width={window.innerWidth}
@@ -1211,7 +1370,10 @@ export const WhiteboardPage = () => {
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
-          style={{ cursor: selectedTool === TOOLS.SELECT ? 'default' : 'crosshair' }}
+          onTouchStart={handleMouseDown}
+          onTouchMove={handleMouseMove}
+          onTouchEnd={handleMouseUp}
+          style={{ cursor: selectedTool === TOOLS.SELECT ? 'default' : 'crosshair', touchAction: 'none' }}
           data-testid="konva-stage"
         >
           <Layer ref={layerRef}>
@@ -1222,9 +1384,9 @@ export const WhiteboardPage = () => {
         </Stage>
 
         {/* Cursors */}
-        {Object.entries(cursors).map(([userId, cursor], idx) => (
+        {Object.entries(cursors).map(([sid, cursor], idx) => (
           <div
-            key={userId}
+            key={sid}
             style={{
               position: 'absolute',
               left: cursor.x,
@@ -1287,6 +1449,15 @@ export const WhiteboardPage = () => {
             <CircleIcon className="w-5 h-5" />
           </Button>
           <Button
+            variant={selectedTool === TOOLS.TRIANGLE ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setSelectedTool(TOOLS.TRIANGLE)}
+            className="rounded-full h-10 w-10 p-0"
+            title="Triangle"
+          >
+            <Triangle className="w-5 h-5" />
+          </Button>
+          <Button
             variant={selectedTool === TOOLS.ARROW ? 'default' : 'ghost'}
             size="sm"
             onClick={() => setSelectedTool(TOOLS.ARROW)}
@@ -1303,6 +1474,15 @@ export const WhiteboardPage = () => {
             data-testid="tool-text"
           >
             <Type className="w-5 h-5" />
+          </Button>
+          <Button
+            variant={selectedTool === TOOLS.STICKY ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setSelectedTool(TOOLS.STICKY)}
+            className="rounded-full h-10 w-10 p-0"
+            title="Sticky Note"
+          >
+            <StickyNote className="w-5 h-5" />
           </Button>
           <div className="w-px h-6 bg-border mx-1" />
           <Button
@@ -1335,7 +1515,7 @@ export const WhiteboardPage = () => {
               <X className="w-4 h-4" />
             </Button>
           </div>
-          
+
           <div className="space-y-3">
             {aiSuggestions.length === 0 ? (
               <p className="text-sm text-muted-foreground">No suggestions available</p>
@@ -1349,17 +1529,17 @@ export const WhiteboardPage = () => {
                   <h4 className="font-medium text-sm mb-1">{suggestion.title}</h4>
                   <p className="text-xs text-muted-foreground mb-3">{suggestion.description}</p>
                   <div className="flex gap-2">
-                    <Button 
-                      size="sm" 
-                      className="rounded-full flex-1 h-8" 
+                    <Button
+                      size="sm"
+                      className="rounded-full flex-1 h-8"
                       onClick={() => handleAcceptSuggestion(suggestion)}
                       data-testid="accept-suggestion"
                     >
                       Accept
                     </Button>
-                    <Button 
-                      size="sm" 
-                      variant="ghost" 
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       className="rounded-full flex-1 h-8"
                       onClick={() => handleDismissSuggestion(suggestion.id)}
                       data-testid="reject-suggestion"
@@ -1392,7 +1572,7 @@ export const WhiteboardPage = () => {
               <X className="w-4 h-4" />
             </Button>
           </div>
-          
+
           <div className="space-y-3">
             <div className="space-y-2">
               <Textarea
@@ -1425,17 +1605,17 @@ export const WhiteboardPage = () => {
                   <h4 className="font-medium text-sm mb-1">{suggestion.title}</h4>
                   <p className="text-xs text-muted-foreground mb-3">{suggestion.description}</p>
                   <div className="flex gap-2">
-                    <Button 
-                      size="sm" 
-                      className="rounded-full flex-1 h-8" 
+                    <Button
+                      size="sm"
+                      className="rounded-full flex-1 h-8"
                       onClick={() => handleAcceptSuggestion(suggestion)}
                       data-testid="accept-custom-suggestion"
                     >
                       Accept
                     </Button>
-                    <Button 
-                      size="sm" 
-                      variant="ghost" 
+                    <Button
+                      size="sm"
+                      variant="ghost"
                       className="rounded-full flex-1 h-8"
                       onClick={() => {
                         setCustomSuggestions(prev => prev.filter(s => s.id !== suggestion.id));

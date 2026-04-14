@@ -24,7 +24,7 @@ export const LoginPage = () => {
     try {
       await login(email, password);
       toast.success('Logged in successfully!');
-      navigate('/dashboard');
+      // navigation handled by PublicRoute wrapper
     } catch (error) {
       toast.error(error.response?.data?.detail || 'Login failed');
     } finally {
@@ -41,7 +41,7 @@ export const LoginPage = () => {
       access_type: 'offline',
       prompt: 'consent'
     });
-    
+
     window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
   };
 
@@ -50,7 +50,7 @@ export const LoginPage = () => {
       <div className="w-full max-w-md">
         <div className="glass rounded-2xl p-8 animate-fade-in">
           <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold mb-2" style={{letterSpacing: '-0.02em'}}>Welcome Back</h1>
+            <h1 className="text-3xl font-bold mb-2" style={{ letterSpacing: '-0.02em' }}>Welcome Back</h1>
             <p className="text-muted-foreground">Sign in to continue to CanvasFlow</p>
           </div>
 
