@@ -1,0 +1,36 @@
+Traceback (most recent call last):
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\pymongo\srv_resolver.py", line 97, in _resolve_uri
+    results = _resolve(
+              ^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\pymongo\srv_resolver.py", line 45, in _resolve
+    return resolver.resolve(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\dns\resolver.py", line 1572, in resolve
+    return get_default_resolver().resolve(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\dns\resolver.py", line 1314, in resolve
+    (request, answer) = resolution.next_request()
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\dns\resolver.py", line 758, in next_request
+    raise NXDOMAIN(qnames=self.qnames_to_try, responses=self.nxdomain_responses)
+dns.resolver.NXDOMAIN: The DNS query name does not exist: _mongodb._tcp.cluster0.wjwmdfq.mongodb.net.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\pymongo\mongo_client.py", line 766, in __init__
+    res = uri_parser.parse_uri(
+          ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\pymongo\uri_parser.py", line 556, in parse_uri
+    nodes = dns_resolver.get_hosts()
+            ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\pymongo\srv_resolver.py", line 131, in get_hosts
+    _, nodes = self._get_srv_response_and_hosts(True)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\pymongo\srv_resolver.py", line 111, in _get_srv_response_and_hosts
+    results = self._resolve_uri(encapsulate_errors)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\AppData\Roaming\Python\Python311\site-packages\pymongo\srv_resolver.py", line 105, in _resolve_uri
+    raise ConfigurationError(str(exc))
+pymongo.errors.ConfigurationError: The DNS query name does not exist: _mongodb._tcp.cluster0.wjwmdfq.mongodb.net.

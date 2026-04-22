@@ -35,7 +35,7 @@ export const LoginPage = () => {
   const handleGoogleLogin = () => {
     const params = new URLSearchParams({
       client_id: '812425967195-iafrnsst6p9s2p9ppd9vembkmftknptp.apps.googleusercontent.com',
-      redirect_uri: 'http://localhost:3000/auth/google/callback',
+      redirect_uri: `${window.location.origin}/auth/google/callback`,
       response_type: 'code',
       scope: 'openid email profile',
       access_type: 'offline',
