@@ -1,239 +1,141 @@
-# CanvasFlow - AI-Assisted Collaborative Whiteboard
+<div align="center">
+  <h1>🎨 CanvasFlow AI</h1>
+  <p><strong>A Next-Generation Real-Time Collaborative Whiteboard powered by AI</strong></p>
 
-A full-stack real-time collaborative whiteboard application with AI-powered suggestions built using React, FastAPI, MongoDB, and Socket.IO.
+  [![React](https://img.shields.io/badge/React-19.0-blue.svg?style=flat-square&logo=react)](https://reactjs.org/)
+  [![FastAPI](https://img.shields.io/badge/FastAPI-0.109-009688.svg?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
+  [![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248.svg?style=flat-square&logo=mongodb)](https://www.mongodb.com/)
+  [![Socket.io](https://img.shields.io/badge/Socket.io-Realtime-010101.svg?style=flat-square&logo=socket.io)](https://socket.io/)
+  [![Gemini](https://img.shields.io/badge/AI-Google_Gemini-8E75B2.svg?style=flat-square)](https://deepmind.google/technologies/gemini/)
+</div>
 
-## Features
+<br />
 
-- **Real-time Collaboration**: Multiple users can work on the same board simultaneously with live cursor tracking and instant updates
-- **Drawing Tools**: Freehand pen, shapes (rectangle, circle, arrow, line), and text annotations
-- **Object Manipulation**: Select, move, resize, and delete objects on the canvas
-- **Undo/Redo**: Complete version history for easy corrections
-- **AI Suggestions**: Get intelligent recommendations to improve your diagrams using Google Gemini
-- **Board Sharing**: Share boards via unique links with collaborators
-- **User Authentication**: Secure JWT-based authentication
-- **Modern UI**: Clean, minimal interface with glassmorphism effects
+CanvasFlow AI is a full-stack, real-time collaborative whiteboard application that seamlessly blends traditional diagramming tools with intelligent AI assistance. Built with modern web technologies, it allows teams to brainstorm, design, and plan with the power of Google's Gemini AI.
 
-## Tech Stack
+---
+
+## ✨ Features
+
+- 🤝 **Real-time Collaboration**: Live multiplayer cursors and instant syncing using Socket.IO.
+- 🛠️ **Comprehensive Drawing Tools**: Freehand pen, geometric shapes (rectangle, circle, arrow, line), and text annotations.
+- 🤖 **AI-Powered Diagramming**: Generate diagrams from natural language prompts using Google Gemini 2.0 Flash.
+- ⏪ **Undo/Redo History**: Complete version history to easily correct mistakes.
+- 🔗 **Board Sharing**: Generate secure, unique links to invite collaborators.
+- 🔐 **Authentication**: Secure JWT-based email login & **Google OAuth 2.0** integration.
+- 🎨 **Glassmorphism UI**: Beautiful, modern, and responsive interface featuring light/dark modes.
+
+---
+
+## 🛠️ Tech Stack
 
 ### Frontend
-- React 19
-- Konva.js for canvas rendering
-- Socket.IO client for real-time communication
-- Tailwind CSS + Shadcn UI for styling
-- React Router for navigation
+- **Framework**: React 19 (Create React App + Craco)
+- **Canvas Engine**: Konva.js / React-Konva
+- **Styling**: Tailwind CSS + Shadcn UI
+- **Real-time**: Socket.IO Client
+- **Hosting**: Vercel
 
 ### Backend
-- FastAPI (Python)
-- Python-SocketIO for real-time WebSocket communication
-- Motor (async MongoDB driver)
-- JWT authentication
-- Google Gemini AI integration
+- **Framework**: FastAPI (Python)
+- **Real-time**: Python-SocketIO (ASGI)
+- **Database**: MongoDB (Motor async driver)
+- **AI Integration**: Google Generative AI (Gemini)
+- **Hosting**: Render
 
-### Database
-- MongoDB for storing users, boards, and version history
+---
 
-## Prerequisites
+## 🚀 Live Deployment Guide
 
-- Docker and Docker Compose (for containerized setup)
-- OR Node.js 18+, Python 3.11+, and MongoDB (for local development)
+CanvasFlow AI is optimized for cloud deployment using **Vercel** (Frontend) and **Render** (Backend).
 
-## Quick Start with Docker
+### 1. Backend (Render)
+1. Create a new **Web Service** on Render connected to this repository.
+2. Set the Root Directory to `backend`.
+3. Build Command: `pip install -r requirements.txt`
+4. Start Command: `uvicorn server:socket_app --host 0.0.0.0 --port $PORT`
+5. Configure the Environment Variables (see below).
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd canvasflow
-```
+### 2. Frontend (Vercel)
+1. Create a new **Project** on Vercel connected to this repository.
+2. Set the Root Directory to `frontend`.
+3. Vercel will auto-detect React (Craco).
+4. **Important**: Set the Install Command to `npm install --legacy-peer-deps` to avoid ESLint peer dependency issues.
+5. Set `REACT_APP_BACKEND_URL` to your Render backend URL.
 
-2. Build and run with Docker Compose:
-```bash
-docker-compose up --build
-```
+### 3. Google OAuth Setup
+To enable Google Login in production:
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/).
+2. Under **Authorized JavaScript origins**, add your Vercel URL (e.g., `https://your-app.vercel.app`).
+3. Under **Authorized redirect URIs**, add `https://your-app.vercel.app/auth/google/callback`.
 
-3. Access the application:
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:8001
-   - MongoDB: localhost:27017
+---
 
-## Local Development Setup
+## 💻 Local Development Setup
+
+### Prerequisites
+- Node.js 18+
+- Python 3.11+
+- MongoDB instance (Local or Atlas)
 
 ### Backend Setup
-
-1. Navigate to backend directory:
 ```bash
 cd backend
-```
-
-2. Create a virtual environment:
-```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
-
-3. Install dependencies:
-```bash
-pip install -r requirements.txt --extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
-```
-
-4. Set up environment variables in `.env`:
-```
-MONGO_URL=mongodb://localhost:27017
-DB_NAME=canvasflow
-CORS_ORIGINS=*
-JWT_SECRET=your_super_secret_jwt_key
-JWT_ALGORITHM=HS256
-GEMINI_API_KEY=your_gemini_api_key
-```
-
-5. Run the backend:
-```bash
+pip install -r requirements.txt
 uvicorn server:socket_app --host 0.0.0.0 --port 8001 --reload
 ```
 
 ### Frontend Setup
-
-1. Navigate to frontend directory:
 ```bash
 cd frontend
+npm install --legacy-peer-deps
+npm start
 ```
-
-2. Install dependencies:
-```bash
-yarn install
-```
-
-3. Set up environment variables in `.env`:
-```
-REACT_APP_BACKEND_URL=http://localhost:8001
-```
-
-4. Run the development server:
-```bash
-yarn start
-```
-
-5. Open http://localhost:3000 in your browser
-
-## Architecture Overview
-
-### Real-time Collaboration Flow
-1. Users connect to the board via Socket.IO WebSocket
-2. Each drawing action is broadcast to all connected users
-3. Cursor movements are tracked and displayed in real-time
-4. Board state is maintained on the server and synced across clients
-
-### AI Integration
-- Uses Google Gemini API for intelligent suggestions
-- Analyzes board objects to provide contextual suggestions
-- Suggestions include shape cleaning, annotations, and layout improvements
-
-### Data Models
-- **User**: Authentication and user profile data
-- **Board**: Canvas data, ownership, and collaboration settings
-- **BoardVersion**: Historical snapshots for undo/redo
-- **BoardObject**: Individual shapes, drawings, and text on canvas
-
-## API Endpoints
-
-### Authentication
-- `POST /api/auth/register` - Register new user
-- `POST /api/auth/login` - Login user
-- `GET /api/auth/me` - Get current user
-
-### Boards
-- `GET /api/boards` - List user's boards
-- `POST /api/boards` - Create new board
-- `GET /api/boards/{board_id}` - Get board details
-- `PUT /api/boards/{board_id}` - Update board
-- `DELETE /api/boards/{board_id}` - Delete board
-- `GET /api/boards/share/{share_token}` - Access board via share link
-
-### AI
-- `POST /api/ai/suggestions` - Get AI suggestions for board
-
-### WebSocket Events
-- `join_board` - Join a board room
-- `cursor_move` - Update cursor position
-- `board_update` - Broadcast board changes
-- `user_joined` - Notify when user joins
-- `user_left` - Notify when user leaves
-
-## Keyboard Shortcuts
-
-- `Cmd/Ctrl + Z` - Undo
-- `Cmd/Ctrl + Shift + Z` - Redo
-- `Delete` - Delete selected object
-- `V` - Select tool
-- `P` - Pen tool
-- `R` - Rectangle tool
-- `C` - Circle tool
-- `A` - Arrow tool
-- `T` - Text tool
-
-## Deployment
-
-### Using Docker Compose (Recommended)
-
-The included `docker-compose.yml` sets up all services:
-```bash
-docker-compose up -d
-```
-
-### Manual Deployment
-
-1. Set up MongoDB instance
-2. Deploy backend with environment variables configured
-3. Build frontend: `yarn build`
-4. Serve frontend static files with nginx or similar
-5. Configure nginx to proxy `/api` and `/socket.io` to backend
-
-## Environment Variables
-
-### Backend
-- `MONGO_URL` - MongoDB connection string
-- `DB_NAME` - Database name
-- `CORS_ORIGINS` - Allowed CORS origins
-- `JWT_SECRET` - Secret key for JWT tokens
-- `JWT_ALGORITHM` - JWT algorithm (default: HS256)
-- `GEMINI_API_KEY` - Google Gemini API key for AI features
-
-### Frontend
-- `REACT_APP_BACKEND_URL` - Backend API URL
-
-## Contributing
-
-Contributions are welcome! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Troubleshooting
-
-### WebSocket Connection Issues
-- Ensure backend is running and accessible
-- Check CORS settings in backend
-- Verify `REACT_APP_BACKEND_URL` points to correct backend URL
-
-### AI Suggestions Not Working
-- Verify `GEMINI_API_KEY` is set correctly
-- Check backend logs for AI API errors
-- Ensure google-genai package is installed
-
-### Database Connection Errors
-- Verify MongoDB is running
-- Check `MONGO_URL` environment variable
-- Ensure MongoDB allows connections from your IP
-
-## Support
-
-For issues and questions, please open an issue on GitHub or contact the development team.
+*Frontend will be available at `http://localhost:3000`*
 
 ---
 
-Built By ♥️ Shubham Shrivastava
+## 🔑 Environment Variables
+
+### Backend (`backend/.env`)
+| Variable | Description |
+|----------|-------------|
+| `MONGO_URL` | MongoDB connection string (URL-encode special characters like `@` to `%40`) |
+| `DB_NAME` | Database name (e.g., `canvasflow`) |
+| `CORS_ORIGINS` | Allowed frontend URLs (e.g., `https://your-app.vercel.app,http://localhost:3000`) |
+| `JWT_SECRET` | Secret key for JWT token generation |
+| `GEMINI_API_KEY` | Google Gemini API Key |
+| `GOOGLE_CLIENT_ID` | Google OAuth Client ID |
+| `GOOGLE_CLIENT_SECRET`| Google OAuth Client Secret |
+| `GOOGLE_CALLBACK_URL` | Your frontend Google callback URL |
+
+### Frontend (`frontend/.env`)
+| Variable | Description |
+|----------|-------------|
+| `REACT_APP_BACKEND_URL`| URL of the FastAPI backend (e.g., `http://localhost:8001`) |
+
+---
+
+## ⌨️ Keyboard Shortcuts
+
+- `Cmd/Ctrl + Z` : Undo
+- `Cmd/Ctrl + Shift + Z` : Redo
+- `Delete` : Delete selected object
+- `V` : Select tool
+- `P` : Pen tool
+- `R` : Rectangle tool
+- `C` : Circle tool
+- `A` : Arrow tool
+- `T` : Text tool
+
+---
+
+## 📄 License
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+<div align="center">
+  <b>Built By ♥️ Shubham Shrivastava</b>
+</div>
